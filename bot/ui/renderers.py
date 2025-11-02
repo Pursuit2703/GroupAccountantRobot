@@ -555,7 +555,7 @@ def render_settlement_message(settlement: dict, from_user_name: str, to_user_nam
     status = settlement.get('status', 'pending')
 
     to_user = get_user(settlement['to_user_id'])
-    to_user_mention = f'<a href="tg://user?id={to_user['tg_id']}">{to_user_name}</a>' if to_user else to_user_name
+    to_user_mention = f'<a href="tg://user?id={to_user["tg_id"]}">{to_user_name}</a>' if to_user else to_user_name
 
     text = f"💸 <b>Settlement</b>\n\n"
     text += f"{from_user_name} has paid {to_user_mention} {amount_str}.\n\n"
