@@ -337,7 +337,9 @@ def get_group_history(chat_id: int, limit: int = 10, offset: int = 0) -> list[di
                 NULL as to_user_name
             FROM expenses e
             JOIN users p ON e.payer_id = p.id
-            WHERE e.chat_id = ?
+            WHERE e.chat_id = ? AND e.id NOT IN (
+                SELECT expense_id FROM expense_debtors WHERE status = 'rejected'
+            )
             UNION ALL
             SELECT
                 'settlement' as type,
@@ -375,7 +377,9 @@ def get_full_group_history(chat_id: int) -> list[dict]:
                 NULL as to_user_name
             FROM expenses e
             JOIN users p ON e.payer_id = p.id
-            WHERE e.chat_id = ?
+            WHERE e.chat_id = ? AND e.id NOT IN (
+                SELECT expense_id FROM expense_debtors WHERE status = 'rejected'
+            )
             UNION ALL
             SELECT
                 'settlement' as type,
