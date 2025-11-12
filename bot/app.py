@@ -42,6 +42,8 @@ from bot.db.repos import (
     get_owed_amount,
     get_spending_by_category,
     get_who_paid_how_much_by_period,
+    set_settings_editor_id,
+    create_or_update_group_menu,
     get_group_history,
     update_expense_message_id,
     update_settlement_message_id,
@@ -53,7 +55,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page
 
 logger = get_logger(__name__)
 
@@ -639,6 +641,8 @@ class Bot:
             self.handle_analytics_paid_week(call, chat_id, user_id)
         elif action == "analytics_paid_month":
             self.handle_analytics_paid_month(call, chat_id, user_id)
+        elif action == "settings":
+            self.handle_settings(call, chat_id, user_id)
         elif action == "export_data":
             self.handle_export_data(call, chat_id, user_id)
         else:
@@ -722,6 +726,43 @@ class Bot:
         except Exception as e:
             logger.error(f"Error in handle_analytics_paid_month: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
+
+    def handle_settings(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            group = get_group(chat_id)
+            if group and group.get('settings_editor_id') and group.get('settings_editor_id') != user_id:
+                lock_time = datetime.fromisoformat(group['settings_locked_at'])
+                if datetime.now() - lock_time > timedelta(seconds=DRAFT_TTL_SECONDS):
+                    logger.info(f"Overriding stale lock for user {group['settings_editor_id']} in chat {chat_id}")
+                    set_settings_editor_id(chat_id, None)
+                else:
+                    other_user = get_user_display_name(group['settings_editor_id'])
+                    self.bot.answer_callback_query(call.id, f"❗ The settings are currently in use by {other_user}. Please wait.", show_alert=True)
+                    return
+
+            set_settings_editor_id(chat_id, user_id)
+            
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            editor_name = get_user_display_name(user_id)
+            
+            # TODO: Get actual settings
+            settings = {}
+            
+            text, keyboard = render_settings_page(group_name, settings, editor_name)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_settings: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening settings.", show_alert=True)
 
     def handle_add_expense_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
@@ -1238,7 +1279,13 @@ class Bot:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
                 set_active_wizard_user_id(chat_id, None)
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                set_menu_message_id(chat_id, None)
+                
+                group_info = self.bot.get_chat(chat_id)
+                group_name = group_info.title if group_info.title else "Your Group Name"
+                menu_text, menu_keyboard = render_main_menu(group_name=group_name)
+                sent_message = self.bot.send_message(chat_id, menu_text, reply_markup=menu_keyboard)
+                create_or_update_group_menu(chat_id, sent_message.message_id)
+
                 self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
     def handle_edit_expense(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
@@ -1305,6 +1352,7 @@ class Bot:
     def handle_main_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
             set_active_wizard_user_id(chat_id, None)
+            set_settings_editor_id(chat_id, None)
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
             
@@ -1428,7 +1476,13 @@ class Bot:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
             set_active_wizard_user_id(chat_id, None)
             self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-            set_menu_message_id(chat_id, None)
+            
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            menu_text, menu_keyboard = render_main_menu(group_name=group_name)
+            sent_message = self.bot.send_message(chat_id, menu_text, reply_markup=menu_keyboard)
+            create_or_update_group_menu(chat_id, sent_message.message_id)
+
             self.bot.answer_callback_query(call.id, text="Settlement draft cancelled.")
 
     def handle_toggle_payee(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payee_id: int):

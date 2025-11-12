@@ -14,6 +14,8 @@ def run_migrations(conn: sqlite3.Connection):
           settings_json TEXT,
           active_wizard_user_id INTEGER,
           active_wizard_locked_at TEXT,
+          settings_editor_id INTEGER,
+          settings_locked_at TEXT,
           last_activity_at TEXT,
           menu_message_last_updated_at TEXT
         );

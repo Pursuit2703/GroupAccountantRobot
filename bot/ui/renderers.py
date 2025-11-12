@@ -25,6 +25,7 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     keyboard.row(
         telebot.types.InlineKeyboardButton("📜 History", callback_data="dm:history"),
         telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics"),
+        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings"),
         telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
     )
     keyboard.row(
@@ -93,6 +94,20 @@ def render_who_paid_how_much(group_name: str, payment_data: list[dict], period: 
     keyboard = telebot.types.InlineKeyboardMarkup()
     keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
     return text, keyboard
+
+def render_settings_page(group_name: str, settings: dict, editor_name: str | None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"⚙️ <b>Settings for {group_name}</b>\n\n"
+
+    if editor_name:
+        text += f"<i>Currently being edited by {editor_name}.</i>\n\n"
+
+    text += "Settings are not yet implemented."
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    return text, keyboard
+
+
 
 
 

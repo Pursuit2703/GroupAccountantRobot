@@ -137,6 +137,14 @@ def set_active_wizard_user_id(chat_id: int, user_id: int | None) -> None:
         else:
             cursor.execute("UPDATE groups SET active_wizard_user_id = NULL, active_wizard_locked_at = NULL WHERE chat_id = ?", (chat_id,))
 
+def set_settings_editor_id(chat_id: int, user_id: int | None) -> None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if user_id:
+            cursor.execute("UPDATE groups SET settings_editor_id = ?, settings_locked_at = datetime('now', 'utc') WHERE chat_id = ?", (user_id, chat_id))
+        else:
+            cursor.execute("UPDATE groups SET settings_editor_id = NULL, settings_locked_at = NULL WHERE chat_id = ?", (chat_id,))
+
 def delete_file_by_id(file_row_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
