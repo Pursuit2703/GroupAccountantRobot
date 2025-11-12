@@ -24,6 +24,7 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("📜 History", callback_data="dm:history"),
+        telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics"),
         telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
     )
     keyboard.row(
@@ -31,6 +32,21 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu")
+    )
+    return text, keyboard
+
+def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📈 Analytics for {group_name}\n\n"
+    text += "Select an analytics report to view:"
+
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("Category Spending", callback_data="dm:analytics_by_category"),
+        telebot.types.InlineKeyboardButton("Weekly Payments", callback_data="dm:analytics_paid_week"),
+        telebot.types.InlineKeyboardButton("Monthly Payments", callback_data="dm:analytics_paid_month")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
     )
     return text, keyboard
 
@@ -222,6 +238,7 @@ def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: 
             owed_amount = get_owed_amount(user_id, draft_data['payee'])
             if owed_amount > 0:
                 text += f"\n\nℹ️ You owe {get_user_display_name(draft_data['payee'])} {format_amount(owed_amount / 100000)}."
+                keyboard.add(telebot.types.InlineKeyboardButton("💰 Full Amount", callback_data="dm:settle_full_amount"))
     elif current_step == 3:
         text += "Please upload proof of payment (e.g., a screenshot)."
     elif current_step == 4:

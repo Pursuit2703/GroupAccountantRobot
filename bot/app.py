@@ -39,6 +39,7 @@ from bot.db.repos import (
     get_settlement_files,
     delete_settlement,
     get_users_owed_by_user,
+    get_owed_amount,
     get_group_history,
     update_expense_message_id,
     update_settlement_message_id,
@@ -50,7 +51,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page
 
 logger = get_logger(__name__)
 
@@ -618,6 +619,8 @@ class Bot:
         elif action == "settle_edit_step":
             step = int(payload)
             self.handle_settle_edit_step(call, chat_id, user_id, step)
+        elif action == "settle_full_amount":
+            self.handle_settle_full_amount(call, chat_id, user_id)
         elif action == "settle_no_proof":
             self.handle_settle_no_proof(call, chat_id, user_id)
         elif action == "delete_settlement":
@@ -626,10 +629,46 @@ class Bot:
             self.handle_edit_settlement(call, chat_id, user_id, payload)
         elif action == "help":
             self.handle_help(call, chat_id, user_id)
+        elif action == "analytics":
+            self.handle_analytics(call, chat_id, user_id)
+        elif action == "analytics_by_category":
+            self.handle_analytics_by_category(call, chat_id, user_id)
+        elif action == "analytics_paid_week":
+            self.handle_analytics_paid_week(call, chat_id, user_id)
+        elif action == "analytics_paid_month":
+            self.handle_analytics_paid_month(call, chat_id, user_id)
         elif action == "export_data":
             self.handle_export_data(call, chat_id, user_id)
         else:
             self.bot.answer_callback_query(call.id, text=f"❗ Unknown or expired action: {action}", show_alert=True)
+
+    def handle_analytics(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            text, keyboard = render_analytics_page(group_name)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_analytics: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
+
+    def handle_analytics_by_category(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
+
+    def handle_analytics_paid_week(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
+
+    def handle_analytics_paid_month(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
 
     def handle_add_expense_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
@@ -1370,6 +1409,27 @@ class Bot:
                 wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=step, total_steps=4, chat_id=chat_id, user_id=user_id)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
+
+    def handle_settle_full_amount(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        with get_connection() as conn:
+            active_draft = get_active_draft(chat_id, user_id)
+            if active_draft and active_draft['type'] == 'settlement' and active_draft['step'] == 2:
+                draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
+                
+                if 'payee' in draft_data:
+                    owed_amount = get_owed_amount(user_id, draft_data['payee'])
+                    if owed_amount > 0:
+                        draft_data['amount'] = owed_amount / 100000
+                        current_step += 1
+                        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                        update_draft(draft_id, draft_data, current_step, expires_at)
+                        wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                        self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+                        self.bot.answer_callback_query(call.id)
+                    else:
+                        self.bot.answer_callback_query(call.id, text="❗ You don't owe any money to this person.", show_alert=True)
+                else:
+                    self.bot.answer_callback_query(call.id, text="❗ Please select a payee first.", show_alert=True)
 
     def handle_settle_no_proof(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
