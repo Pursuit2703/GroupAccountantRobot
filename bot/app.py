@@ -55,7 +55,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_balances_menu, render_reports_menu
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page
 
 logger = get_logger(__name__)
 
@@ -595,8 +595,6 @@ class Bot:
             self.handle_delete_expense(call, chat_id, user_id, payload)
         elif action == "edit_expense":
             self.handle_edit_expense(call, chat_id, user_id, payload)
-        elif action == "all_balances":
-            self.handle_all_balances(call, chat_id, user_id)
         elif action == "balances":
             self.handle_balances(call, chat_id, user_id)
         elif action == "reports":
@@ -605,8 +603,6 @@ class Bot:
             self.handle_main_menu(call, chat_id, user_id)
         elif action == "close_menu":
             self.handle_close_menu(call, chat_id, user_id)
-        elif action == "my_balance":
-            self.handle_my_balance(call, chat_id, user_id)
         elif action == "history":
             offset = int(payload) if payload else 0
             self.handle_history(call, chat_id, user_id, offset)
@@ -1333,32 +1329,15 @@ class Bot:
             draft_data['wizard_message_id'] = new_message.message_id
             update_draft(draft_id, draft_data, 5, expires_at)
 
-    def handle_all_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        try:
-            group_info = self.bot.get_chat(chat_id)
-            group_name = group_info.title if group_info.title else "Your Group Name"
-            
-            balances = get_all_balances(chat_id)
-            text, keyboard = render_all_balances_message(balances, group_name)
-            
-            self.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode='HTML'
-            )
-            self.bot.answer_callback_query(call.id)
-        except Exception as e:
-            logger.error(f"Error in handle_all_balances: {e}")
-            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching balances.", show_alert=True)
-
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
             
-            text, keyboard = render_balances_menu(group_name)
+            balance_summary = get_my_balance(user_id, chat_id)
+            all_balances = get_all_balances(chat_id)
+            
+            text, keyboard = render_balances_page(user_id, group_name, balance_summary, all_balances)
             
             self.bot.edit_message_text(
                 chat_id=chat_id,
@@ -1421,30 +1400,6 @@ class Bot:
             logger.error(f"Error in handle_close_menu: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while closing the menu.", show_alert=True)
             
-    def handle_my_balance(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        try:
-            user_name = get_user_display_name(user_id)
-            if not user_name:
-                user_name = call.from_user.first_name # Fallback to Telegram's first name
-
-            balance_summary = get_my_balance(user_id, chat_id)
-            # Add user_id to balance_summary for rendering logic
-            balance_summary['user_id'] = user_id
-            
-            text, keyboard = render_my_balance_message(balance_summary, user_name, user_id)
-            
-            self.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=text,
-                reply_markup=keyboard,
-                parse_mode='HTML'
-            )
-            self.bot.answer_callback_query(call.id)
-        except Exception as e:
-            logger.error(f"Error in handle_my_balance: {e}")
-            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching your balance.", show_alert=True)
-
     def handle_history(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, offset: int = 0):
         try:
             group_info = self.bot.get_chat(chat_id)

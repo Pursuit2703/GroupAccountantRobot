@@ -31,20 +31,6 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     )
     return text, keyboard
 
-def render_balances_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"📊 <b>Balances for {group_name}</b>\n\n"
-    text += "Select an option:"
-
-    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        telebot.types.InlineKeyboardButton("📊 My Balance", callback_data="dm:my_balance"),
-        telebot.types.InlineKeyboardButton("📋 All Balances", callback_data="dm:all_balances")
-    )
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
-    )
-    return text, keyboard
-
 def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"📈 <b>Reports for {group_name}</b>\n\n"
     text += "Select a report to view:"
@@ -61,6 +47,56 @@ def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeybo
         telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
     )
     return text, keyboard
+
+def render_balances_page(user_id: int, group_name: str, balance_summary: dict, all_balances: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    user_name = get_user_display_name(user_id)
+    text = f"📊 <b>Balances for {group_name}</b>\n\n"
+    text += f"👤 <b>Your Balance Summary ({user_name})</b>\n"
+
+    total_owed = balance_summary.get('total_owed', 0) / 100000
+    total_owed_to_user = balance_summary.get('total_owed_to_user', 0) / 100000
+
+    if total_owed_to_user > total_owed and total_owed_to_user - total_owed >= 0.01:
+        net_balance = total_owed_to_user - total_owed
+        text += f"🎉 You are owed a net total of: {format_amount(net_balance)}\n"
+    elif total_owed > total_owed_to_user and total_owed - total_owed_to_user >= 0.01:
+        net_balance = total_owed - total_owed_to_user
+        text += f"💸 You owe a net total of: {format_amount(net_balance)}\n"
+    else:
+        text += "✅ You are all settled up!\n"
+
+    if balance_summary['detailed_debts']:
+        text += "\n<b>Your Debts:</b>\n"
+        for debt in balance_summary['detailed_debts']:
+            from_user = debt['from_user_display_name']
+            to_user = debt['to_user_display_name']
+            amount = format_amount(debt['amount_u5'] / 100000)
+
+            if debt['from_user_id'] == user_id:
+                text += f"• You owe {to_user}: {amount}\n"
+            else:
+                text += f"• {from_user} owes you: {amount}\n"
+
+    other_balances = [
+        debt for debt in all_balances 
+        if debt['from_user_id'] != user_id and debt['to_user_id'] != user_id
+    ]
+
+    if other_balances:
+        text += "\n<b>Other Balances:</b>\n"
+        for debt in other_balances:
+            from_user = debt['from_user_display_name']
+            to_user = debt['to_user_display_name']
+            amount = format_amount(debt['amount_u5'] / 100000)
+            text += f"• {from_user} owes {to_user}: {amount}\n"
+
+    if not balance_summary['detailed_debts'] and not other_balances:
+        text += "\nEveryone is settled up! 🎉"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    return text, keyboard
+
 
 def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"📈 <b>Analytics for {group_name}</b>\n\n"
@@ -521,54 +557,6 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     return text, keyboard
 
-
-def render_all_balances_message(balances: list[dict], group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"📊 <b>All Balances for {group_name}</b>\n\n"
-
-    if not balances:
-        text += "Everyone is settled up! 🎉"
-    else:
-        for debt in balances:
-            from_user = debt['from_user_display_name']
-            to_user = debt['to_user_display_name']
-            amount = format_amount(debt['amount_u5'] / 100000)
-            text += f"• {from_user} owes {to_user}: {amount}\n"
-
-    keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:balances"))
-    return text, keyboard
-
-def render_my_balance_message(balance_summary: dict, user_name: str, user_id: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"👤 <b>Your Balance Summary ({user_name})</b>\n\n"
-
-    total_owed = balance_summary.get('total_owed', 0) / 100000
-    total_owed_to_user = balance_summary.get('total_owed_to_user', 0) / 100000
-
-    if total_owed_to_user > total_owed and total_owed_to_user - total_owed >= 0.01:
-        net_balance = total_owed_to_user - total_owed
-        text += f"🎉 You are owed a net total of: {format_amount(net_balance)}\n\n"
-    elif total_owed > total_owed_to_user and total_owed - total_owed_to_user >= 0.01:
-        net_balance = total_owed - total_owed_to_user
-        text += f"💸 You owe a net total of: {format_amount(net_balance)}\n\n"
-    else:
-        text += "Everyone is settled up! 🎉\n\n"
-
-    if balance_summary['detailed_debts']:
-        text += "<b>Details:</b>\n"
-        for debt in balance_summary['detailed_debts']:
-            from_user = debt['from_user_display_name']
-            to_user = debt['to_user_display_name']
-            amount = format_amount(debt['amount_u5'] / 100000)
-
-            if debt['from_user_id'] == user_id:
-                text += f"• You owe {to_user}: {amount}\n"
-            else:
-                text += f"• {from_user} owes you: {amount}\n"
-
-    keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:balances"))
-
-    return text, keyboard
 
 def render_history_message(history_events: list[dict], group_name: str, limit: int, offset: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"📜 <b>Recent History for {group_name}</b>\n\n"
