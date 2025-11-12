@@ -12,6 +12,20 @@ def get_group(chat_id: int) -> dict | None:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+def get_group_settings(chat_id: int) -> dict:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT settings_json FROM groups WHERE chat_id = ?", (chat_id,))
+        row = cursor.fetchone()
+        if row and row['settings_json']:
+            return json.loads(row['settings_json'])
+        return {}
+
+def update_group_settings(chat_id: int, settings: dict) -> None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE groups SET settings_json = ? WHERE chat_id = ?", (json.dumps(settings), chat_id))
+
 def create_or_update_group_menu(chat_id: int, message_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -101,16 +115,34 @@ def add_user_to_group_if_not_exists(user_id: int, chat_id: int) -> None:
         cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO group_users (user_id, chat_id) VALUES (?, ?)", (user_id, chat_id))
 
-def get_group_members(chat_id: int, exclude_user_id: int) -> list[dict]:
+def get_group_members(chat_id: int, exclude_user_id: int | None = None, exclude_from_settings: bool = True) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        logger.info(f"Fetching group members for chat_id: {chat_id}")
-        cursor.execute("""
+        
+        excluded_members = []
+        if exclude_from_settings:
+            settings = get_group_settings(chat_id)
+            excluded_members = settings.get('excluded_members', [])
+        
+        logger.info(f"Fetching group members for chat_id: {chat_id}, excluding: {excluded_members}")
+        
+        query = """
             SELECT DISTINCT u.id, u.display_name 
             FROM users u
             JOIN group_users gu ON u.id = gu.user_id
-            WHERE gu.chat_id = ? AND u.id != ?
-        """, (chat_id, exclude_user_id))
+            WHERE gu.chat_id = ?
+        """
+        params = [chat_id]
+        
+        if exclude_user_id is not None:
+            query += " AND u.id != ?"
+            params.append(exclude_user_id)
+        
+        if excluded_members:
+            query += f" AND u.id NOT IN ({','.join('?' for _ in excluded_members)})"
+            params.extend(excluded_members)
+            
+        cursor.execute(query, params)
         members = [dict(row) for row in cursor.fetchall()]
         logger.info(f"Found {len(members)} group members for chat {chat_id}: {members}")
         return members

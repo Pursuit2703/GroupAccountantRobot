@@ -7,7 +7,7 @@ import threading
 import time
 from bot.db.connection import get_connection
 from bot.logger import get_logger
-from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH
+from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH, ADMIN_USER_IDS
 from bot.services.menu_service import ensure_menu
 from bot.db.repos import (
     create_user_if_not_exists,
@@ -48,6 +48,8 @@ from bot.db.repos import (
     update_expense_message_id,
     update_settlement_message_id,
     get_debt_between_users,
+    get_group_settings,
+    update_group_settings,
     # create_or_update_group_menu,
 )
 from bot.services.draft_service import expire_drafts
@@ -55,7 +57,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page, render_clear_debt_confirmation
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page, render_clear_debt_confirmation, render_excluded_members_page
 
 logger = get_logger(__name__)
 
@@ -148,6 +150,15 @@ class Bot:
             logger.info(f"Received /menu command from user {message.from_user.id} in chat {message.chat.id}")
             chat_id = message.chat.id
             update_group_last_activity(chat_id)
+
+            user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
+            add_user_to_group_if_not_exists(user_id, chat_id)
+            
+            settings = get_group_settings(chat_id)
+            excluded_members = settings.get('excluded_members', [])
+            if user_id in excluded_members:
+                self.bot.delete_message(chat_id, message.message_id)
+                return
 
             with get_connection() as conn:
                 group = get_group(chat_id)
@@ -408,6 +419,13 @@ class Bot:
                 user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
                 add_user_to_group_if_not_exists(user_id, message.chat.id)
                 
+                settings = get_group_settings(message.chat.id)
+                excluded_members = settings.get('excluded_members', [])
+                if user_id in excluded_members:
+                    if message.text == '/menu':
+                        self.bot.delete_message(message.chat.id, message.message_id)
+                    return
+
                 group = get_group(message.chat.id)
                 active_wizard_user_id = group.get('active_wizard_user_id') if group else None
 
@@ -547,6 +565,12 @@ class Bot:
         user_id = create_user_if_not_exists(call.from_user.id, call.from_user.username, call.from_user.full_name)
         add_user_to_group_if_not_exists(user_id, chat_id)
 
+        settings = get_group_settings(chat_id)
+        excluded_members = settings.get('excluded_members', [])
+        if user_id in excluded_members:
+            self.bot.answer_callback_query(call.id)
+            return
+
         group = get_group(chat_id)
         active_wizard_user_id = group.get('active_wizard_user_id') if group else None
 
@@ -649,6 +673,10 @@ class Bot:
             self.handle_analytics_paid_month(call, chat_id, user_id)
         elif action == "settings":
             self.handle_settings(call, chat_id, user_id)
+        elif action == "manage_excluded_members":
+            self.handle_manage_excluded_members(call, chat_id, user_id)
+        elif action == "toggle_excluded_member":
+            self.handle_toggle_excluded_member(call, chat_id, user_id, payload)
         elif action == "export_data":
             self.handle_export_data(call, chat_id, user_id)
         else:
@@ -756,7 +784,7 @@ class Bot:
             # TODO: Get actual settings
             settings = {}
             
-            text, keyboard = render_settings_page(group_name, settings, editor_name)
+            text, keyboard = render_settings_page(group_name, settings, editor_name, call.from_user.id, ADMIN_USER_IDS)
             
             self.bot.edit_message_text(
                 chat_id=chat_id,
@@ -769,6 +797,59 @@ class Bot:
         except Exception as e:
             logger.error(f"Error in handle_settings: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening settings.", show_alert=True)
+
+    def handle_manage_excluded_members(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        if call.from_user.id not in ADMIN_USER_IDS:
+            self.bot.answer_callback_query(call.id, text="❗ You are not authorized to manage excluded members.", show_alert=True)
+            return
+
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            settings = get_group_settings(chat_id)
+            excluded_members = settings.get('excluded_members', [])
+            members = get_group_members(chat_id, exclude_user_id=user_id, exclude_from_settings=False)
+            
+            text, keyboard = render_excluded_members_page(group_name, members, excluded_members)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_manage_excluded_members: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening the excluded members page.", show_alert=True)
+
+    def handle_toggle_excluded_member(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+        if call.from_user.id not in ADMIN_USER_IDS:
+            self.bot.answer_callback_query(call.id, text="❗ You are not authorized to manage excluded members.", show_alert=True)
+            return
+
+        try:
+            member_id = int(payload)
+            
+            settings = get_group_settings(chat_id)
+            excluded_members = settings.get('excluded_members', [])
+            
+            if member_id in excluded_members:
+                excluded_members.remove(member_id)
+            else:
+                excluded_members.append(member_id)
+                
+            settings['excluded_members'] = excluded_members
+            update_group_settings(chat_id, settings)
+            
+            # Refresh the page
+            self.handle_manage_excluded_members(call, chat_id, user_id)
+            
+        except Exception as e:
+            logger.error(f"Error in handle_toggle_excluded_member: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating the excluded members list.", show_alert=True)
 
     def handle_add_expense_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:

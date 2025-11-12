@@ -165,7 +165,7 @@ def render_who_paid_how_much(group_name: str, payment_data: list[dict], period: 
     keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
     return text, keyboard
 
-def render_settings_page(group_name: str, settings: dict, editor_name: str | None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+def render_settings_page(group_name: str, settings: dict, editor_name: str | None, user_id: int, admin_ids: list[int]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"⚙️ <b>Settings for {group_name}</b>\n\n"
 
     if editor_name:
@@ -174,8 +174,32 @@ def render_settings_page(group_name: str, settings: dict, editor_name: str | Non
     text += "Settings are not yet implemented."
 
     keyboard = telebot.types.InlineKeyboardMarkup()
+
+    if user_id in admin_ids:
+        keyboard.add(telebot.types.InlineKeyboardButton("🚫 Manage Excluded Members", callback_data="dm:manage_excluded_members"))
+
     keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
     return text, keyboard
+
+def render_excluded_members_page(group_name: str, members: list[dict], excluded_members: list[int]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"🚫 <b>Manage Excluded Members for {group_name}</b>\n\n"
+    text += "Select members to exclude from expense splits."
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    
+    buttons = []
+    for member in members:
+        is_excluded = member['id'] in excluded_members
+        button_text = f"{'❌' if is_excluded else '✅'} {member['display_name']}"
+        buttons.append(telebot.types.InlineKeyboardButton(button_text, callback_data=f"dm:toggle_excluded_member:{member['id']}"))
+
+    # Add buttons in rows of 2
+    for i in range(0, len(buttons), 2):
+        keyboard.row(*buttons[i:i+2])
+
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:settings"))
+    return text, keyboard
+
 
 
 
