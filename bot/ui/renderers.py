@@ -29,6 +29,9 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     keyboard.row(
         telebot.types.InlineKeyboardButton("📊 Export Data", callback_data="dm:export_data")
     )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu")
+    )
     return text, keyboard
 
 

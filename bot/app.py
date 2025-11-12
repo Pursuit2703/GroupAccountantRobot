@@ -594,6 +594,8 @@ class Bot:
             self.handle_all_balances(call, chat_id, user_id)
         elif action == "main_menu":
             self.handle_main_menu(call, chat_id, user_id)
+        elif action == "close_menu":
+            self.handle_close_menu(call, chat_id, user_id)
         elif action == "my_balance":
             self.handle_my_balance(call, chat_id, user_id)
         elif action == "history":
@@ -1227,6 +1229,15 @@ class Bot:
         except Exception as e:
             logger.error(f"Error in handle_main_menu: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while returning to the main menu.", show_alert=True)
+
+    def handle_close_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            self.bot.delete_message(chat_id, call.message.message_id)
+            set_menu_message_id(chat_id, None)
+            self.bot.answer_callback_query(call.id, text="Menu closed.")
+        except Exception as e:
+            logger.error(f"Error in handle_close_menu: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while closing the menu.", show_alert=True)
             
     def handle_my_balance(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
