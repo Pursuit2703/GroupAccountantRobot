@@ -1,7 +1,7 @@
 import csv
 from datetime import datetime
 import io
-from bot.db.repos import get_full_group_history, get_expense_files, get_settlement_files
+from bot.db.repos import get_full_group_history, get_expense_files, get_settlement_files, get_expense_debtors
 from bot.config import FILES_CHANNEL_ID
 
 def generate_csv_report(chat_id: int) -> io.StringIO:
@@ -24,10 +24,14 @@ def generate_csv_report(chat_id: int) -> io.StringIO:
         message_link = f"https://t.me/c/{str(chat_id)[4:]}/{event['message_id']}" if event['message_id'] else ""
         
         file_links = []
+        payee_to = ""
         if event['type'] == 'expense':
             files = get_expense_files(event['id'])
+            debtors = get_expense_debtors(event['id'])
+            payee_to = ", ".join([d['display_name'] for d in debtors])
         elif event['type'] == 'settlement':
             files = get_settlement_files(event['id'])
+            payee_to = event['to_user_name']
         else:
             files = []
             
@@ -40,7 +44,7 @@ def generate_csv_report(chat_id: int) -> io.StringIO:
             event_time,
             event['type'].capitalize(),
             event['payer_name'] if event['type'] == 'expense' else event['from_user_name'],
-            "" if event['type'] == 'expense' else event['to_user_name'],
+            payee_to,
             amount,
             event['description'],
             event['category'],
