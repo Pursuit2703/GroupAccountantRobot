@@ -218,7 +218,6 @@ class Bot:
                 return
             
             logger.info(f"Processing media group {media_group_id} with {len(messages)} messages.")
-            # For simplicity, we process files for the user of the first message in the group
             first_message = messages[0]
             chat_id = first_message.chat.id
             user_id = create_user_if_not_exists(first_message.from_user.id, first_message.from_user.username, first_message.from_user.full_name)
@@ -235,16 +234,53 @@ class Bot:
             if 'files' not in draft_data:
                 draft_data['files'] = []
 
+            processed_files_info = []
             for message in messages:
-                self.process_file(message, user_id, draft_id, draft_data)
+                # Process each file but don't delete the source messages yet.
+                file_info = self.process_file(message, user_id, draft_id, draft_data, delete_source_message=False)
+                if file_info:
+                    processed_files_info.append(file_info)
+
+            if not processed_files_info:
+                # No files were successfully processed
+                return
 
             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
             update_draft(draft_id, draft_data, current_step, expires_at)
+            
             if active_draft['type'] == 'expense':
                 wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
             else: # settlement
                 wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
-            self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+            
+            try:
+                self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+                # Success! Now delete all source messages from the media group.
+                for msg in messages:
+                    self.bot.delete_message(chat_id, msg.message_id)
+            except telebot.apihelper.ApiTelegramException as e:
+                if hasattr(e, 'error_code') and e.error_code == 400 and "message to edit not found" in e.description:
+                    logger.warning(
+                        f"Wizard message {draft_data.get('wizard_message_id')} not found for user {user_id} in chat {chat_id}. "
+                        f"The user might have deleted it. Rolling back files and clearing draft."
+                    )
+                    
+                    # Rollback all processed files
+                    for file_info in processed_files_info:
+                        try:
+                            self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
+                        except Exception as del_e:
+                            logger.error(f"Error deleting file from channel while rolling back: {del_e}")
+                        delete_file_by_id(file_info['file_row_id'])
+
+                    # Rollback: Delete the draft
+                    with get_connection() as conn:
+                        conn.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
+                    set_active_wizard_user_id(chat_id, None)
+                    
+                    # IMPORTANT: Do not delete the user's source messages.
+                else:
+                    logger.error(f"An unexpected API error occurred in process_media_group: {e}")
 
     def process_single_file(self, message: telebot.types.Message):
         with self.file_processing_lock:
@@ -263,40 +299,81 @@ class Bot:
             if 'files' not in draft_data:
                 draft_data['files'] = []
 
-            self.process_file(message, user_id, draft_id, draft_data)
+            # Process the file but don't delete the source message yet.
+            processed_file_info = self.process_file(message, user_id, draft_id, draft_data, delete_source_message=False)
+            if not processed_file_info:
+                # process_file failed (e.g. wrong mime type) and handled its own messaging/deletion.
+                return
 
             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
             update_draft(draft_id, draft_data, current_step, expires_at)
+
             if active_draft['type'] == 'expense':
                 wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
             else: # settlement
                 wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
-            self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+            
+            try:
+                self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+                # Success! Now delete the source message.
+                self.bot.delete_message(message.chat.id, message.message_id)
+            except telebot.apihelper.ApiTelegramException as e:
+                if hasattr(e, 'error_code') and e.error_code == 400 and "message to edit not found" in e.description:
+                    logger.warning(
+                        f"Wizard message {draft_data.get('wizard_message_id')} not found for user {user_id} in chat {chat_id}. "
+                        f"The user might have deleted it. Rolling back file and clearing draft."
+                    )
+                    
+                    # Rollback: Delete the file reference and the file from the channel
+                    try:
+                        self.bot.delete_message(FILES_CHANNEL_ID, processed_file_info['origin_channel_message_id'])
+                    except Exception as del_e:
+                        logger.error(f"Error deleting file from channel while rolling back: {del_e}")
+                    delete_file_by_id(processed_file_info['file_row_id'])
 
-    def process_file(self, message: telebot.types.Message, user_id: int, draft_id: int, draft_data: dict):
+                    # Rollback: Remove file from draft data before deleting draft
+                    draft_data['files'].pop()
+
+                    # Rollback: Delete the draft
+                    with get_connection() as conn:
+                        conn.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
+                    set_active_wizard_user_id(chat_id, None)
+                    
+                    # IMPORTANT: Do not delete the user's source message.
+                else:
+                    logger.error(f"An unexpected API error occurred in process_single_file: {e}")
+                    # Also don't delete the user's message here as the state is uncertain.
+
+    def process_file(self, message: telebot.types.Message, user_id: int, draft_id: int, draft_data: dict, delete_source_message: bool = True):
         if message.caption:
             draft_data['description'] = message.caption
 
         mime_type = "image/jpeg" if message.photo else message.document.mime_type
         if mime_type not in ["image/jpeg", "image/png", "application/pdf"]:
             warning_msg = self.bot.send_message(message.chat.id, "❗ Invalid file type. Only photos, PNGs, and PDFs are accepted.")
+            # Always delete the source message for an invalid file type, as it can't be processed.
             self.bot.delete_message(message.chat.id, message.message_id)
             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
-            return
+            return None # Indicate failure
 
         forwarded_message = self.bot.forward_message(FILES_CHANNEL_ID, message.chat.id, message.message_id)
         if forwarded_message:
             file_id, file_size = (message.photo[-1].file_id, message.photo[-1].file_size) if message.photo else (message.document.file_id, message.document.file_size)
             if file_id:
                 file_row_id = store_file_ref(file_id, forwarded_message.message_id, user_id, "draft", str(draft_id), mime_type, file_size)
-                self.bot.delete_message(message.chat.id, message.message_id)
-                draft_data['files'].append({
+                if delete_source_message:
+                    self.bot.delete_message(message.chat.id, message.message_id)
+                
+                file_info = {
                     'file_id': file_id,
                     'mime': mime_type,
                     'file_size': file_size,
                     'origin_channel_message_id': forwarded_message.message_id,
                     'file_row_id': file_row_id
-                })
+                }
+                draft_data['files'].append(file_info)
+                return file_info # Return the processed file info for potential rollback
+        return None # Indicate failure
 
 
     def handle_text_message(self, message: telebot.types.Message):
