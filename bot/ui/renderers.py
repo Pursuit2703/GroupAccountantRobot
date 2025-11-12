@@ -36,18 +36,62 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     return text, keyboard
 
 def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"📈 Analytics for {group_name}\n\n"
+    text = f"📈 <b>Analytics for {group_name}</b>\n\n"
     text += "Select an analytics report to view:"
 
-    keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        telebot.types.InlineKeyboardButton("Category Spending", callback_data="dm:analytics_by_category"),
-        telebot.types.InlineKeyboardButton("Weekly Payments", callback_data="dm:analytics_paid_week"),
-        telebot.types.InlineKeyboardButton("Monthly Payments", callback_data="dm:analytics_paid_month")
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("📊 By Category", callback_data="dm:analytics_by_category")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("🗓️ Week", callback_data="dm:analytics_paid_week"),
+        telebot.types.InlineKeyboardButton("🗓️ Month", callback_data="dm:analytics_paid_month")
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
     )
+    return text, keyboard
+
+def render_spending_by_category(group_name: str, spending_data: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📊 <b>Spending by Category for {group_name}</b>\n\n"
+
+    categories_emojis = {
+        "Groceries": "🛒",
+        "Hygiene": "🧼",
+        "Wifi": "🌐",
+        "Electricity": "💡",
+        "Gas": "🔥",
+        "Water": "💧",
+        "Debt": "💸",
+        "Other": "📦"
+    }
+
+    if not spending_data:
+        text += "No spending data available."
+    else:
+        for item in spending_data:
+            category = item['category'] if item['category'] else "Uncategorized"
+            emoji = categories_emojis.get(category, "-")
+            amount = format_amount(item['total_amount'] / 100000)
+            text += f"{emoji} {category}: {amount}\n"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
+    return text, keyboard
+
+def render_who_paid_how_much(group_name: str, payment_data: list[dict], period: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"🗓️ <b>Who Paid How Much ({period}) for {group_name}</b>\n\n"
+
+    if not payment_data:
+        text += "No payment data available for this period."
+    else:
+        for item in payment_data:
+            display_name = item['display_name']
+            amount = format_amount(item['total_amount'] / 100000)
+            text += f"👤 {display_name}: {amount}\n"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
     return text, keyboard
 
 

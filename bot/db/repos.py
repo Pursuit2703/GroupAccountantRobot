@@ -493,3 +493,28 @@ def get_owed_amount(from_user_id: int, to_user_id: int) -> int:
         cursor.execute("SELECT amount_u5 FROM debts WHERE from_user_id = ? AND to_user_id = ?", (from_user_id, to_user_id))
         row = cursor.fetchone()
         return row['amount_u5'] if row else 0
+
+def get_spending_by_category(chat_id: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT category, SUM(amount_u5) as total_amount
+            FROM expenses
+            WHERE chat_id = ?
+            GROUP BY category
+            ORDER BY total_amount DESC
+        """, (chat_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT u.display_name, SUM(e.amount_u5) as total_amount
+            FROM expenses e
+            JOIN users u ON e.payer_id = u.id
+            WHERE e.chat_id = ? AND e.created_at >= date('now', '-{days} days')
+            GROUP BY u.display_name
+            ORDER BY total_amount DESC
+        """, (chat_id,))
+        return [dict(row) for row in cursor.fetchall()]

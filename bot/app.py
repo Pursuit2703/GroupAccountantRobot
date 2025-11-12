@@ -40,6 +40,8 @@ from bot.db.repos import (
     delete_settlement,
     get_users_owed_by_user,
     get_owed_amount,
+    get_spending_by_category,
+    get_who_paid_how_much_by_period,
     get_group_history,
     update_expense_message_id,
     update_settlement_message_id,
@@ -51,7 +53,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much
 
 logger = get_logger(__name__)
 
@@ -662,13 +664,64 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_analytics_by_category(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            spending_data = get_spending_by_category(chat_id)
+            text, keyboard = render_spending_by_category(group_name, spending_data)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_analytics_by_category: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_analytics_paid_week(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            payment_data = get_who_paid_how_much_by_period(chat_id, 7)
+            text, keyboard = render_who_paid_how_much(group_name, payment_data, "Last 7 Days")
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_analytics_paid_week: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_analytics_paid_month(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        self.bot.answer_callback_query(call.id, text="Not implemented yet.", show_alert=True)
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            payment_data = get_who_paid_how_much_by_period(chat_id, 30)
+            text, keyboard = render_who_paid_how_much(group_name, payment_data, "Last 30 Days")
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_analytics_paid_month: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_add_expense_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
