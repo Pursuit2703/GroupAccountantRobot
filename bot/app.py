@@ -326,9 +326,9 @@ class Bot:
                     if current_step == 1:
                         try:
                             amount = float(message.text)
-                            if amount < 0:
+                            if amount <= 0:
                                 self.bot.delete_message(message.chat.id, message.message_id)
-                                warning_msg = self.bot.send_message(message.chat.id, "❗ Amount cannot be less than zero.")
+                                warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be greater than zero.")
                                 threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                                 return                            
                             draft_data['amount'] = amount

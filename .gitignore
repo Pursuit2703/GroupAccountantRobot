@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+debt_manager.db
+*.log
+*.db-shm
+*.db-wal
+*.json
+*.md
