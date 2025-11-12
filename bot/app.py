@@ -55,7 +55,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_all_balances_message, render_my_balance_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_balances_menu, render_reports_menu
 
 logger = get_logger(__name__)
 
@@ -597,6 +597,10 @@ class Bot:
             self.handle_edit_expense(call, chat_id, user_id, payload)
         elif action == "all_balances":
             self.handle_all_balances(call, chat_id, user_id)
+        elif action == "balances":
+            self.handle_balances(call, chat_id, user_id)
+        elif action == "reports":
+            self.handle_reports(call, chat_id, user_id)
         elif action == "main_menu":
             self.handle_main_menu(call, chat_id, user_id)
         elif action == "close_menu":
@@ -1348,6 +1352,44 @@ class Bot:
         except Exception as e:
             logger.error(f"Error in handle_all_balances: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching balances.", show_alert=True)
+
+    def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            text, keyboard = render_balances_menu(group_name)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_balances: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening balances.", show_alert=True)
+
+    def handle_reports(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            group_info = self.bot.get_chat(chat_id)
+            group_name = group_info.title if group_info.title else "Your Group Name"
+            
+            text, keyboard = render_reports_menu(group_name)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_reports: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening reports.", show_alert=True)
 
     def handle_main_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:

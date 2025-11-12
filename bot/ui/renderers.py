@@ -16,23 +16,49 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         telebot.types.InlineKeyboardButton("➕ Add Expense", callback_data="dm:add_expense"),
-        telebot.types.InlineKeyboardButton("💸 Pay My Debts", callback_data="dm:settle_debt")
+        telebot.types.InlineKeyboardButton("💸 Settle Debt", callback_data="dm:settle_debt")
     )
     keyboard.row(
+        telebot.types.InlineKeyboardButton("📊 Balances", callback_data="dm:balances"),
+        telebot.types.InlineKeyboardButton("📈 Reports", callback_data="dm:reports")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings"),
+        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu")
+    )
+    return text, keyboard
+
+def render_balances_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📊 <b>Balances for {group_name}</b>\n\n"
+    text += "Select an option:"
+
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
         telebot.types.InlineKeyboardButton("📊 My Balance", callback_data="dm:my_balance"),
         telebot.types.InlineKeyboardButton("📋 All Balances", callback_data="dm:all_balances")
     )
     keyboard.row(
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
+    )
+    return text, keyboard
+
+def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📈 <b>Reports for {group_name}</b>\n\n"
+    text += "Select a report to view:"
+
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
         telebot.types.InlineKeyboardButton("📜 History", callback_data="dm:history"),
-        telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics"),
-        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings"),
-        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
+        telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics")
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("📊 Export Data", callback_data="dm:export_data")
     )
     keyboard.row(
-        telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu")
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
     )
     return text, keyboard
 
@@ -49,7 +75,7 @@ def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKey
         telebot.types.InlineKeyboardButton("🗓️ Month", callback_data="dm:analytics_paid_month")
     )
     keyboard.row(
-        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:reports")
     )
     return text, keyboard
 
@@ -509,7 +535,7 @@ def render_all_balances_message(balances: list[dict], group_name: str) -> tuple[
             text += f"• {from_user} owes {to_user}: {amount}\n"
 
     keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:balances"))
     return text, keyboard
 
 def render_my_balance_message(balance_summary: dict, user_name: str, user_id: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
@@ -540,7 +566,7 @@ def render_my_balance_message(balance_summary: dict, user_name: str, user_id: in
                 text += f"• {from_user} owes you: {amount}\n"
 
     keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:balances"))
 
     return text, keyboard
 
@@ -580,7 +606,7 @@ def render_history_message(history_events: list[dict], group_name: str, limit: i
     if pagination_row:
         keyboard.row(*pagination_row)
         
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back to Main Menu", callback_data="dm:main_menu"))
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:reports"))
 
     return text, keyboard
 
