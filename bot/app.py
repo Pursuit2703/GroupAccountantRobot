@@ -55,7 +55,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page, render_clear_debt_confirmation
 
 logger = get_logger(__name__)
 
@@ -599,6 +599,12 @@ class Bot:
             self.handle_balances(call, chat_id, user_id)
         elif action == "reports":
             self.handle_reports(call, chat_id, user_id)
+        elif action == "noop":
+            self.bot.answer_callback_query(call.id)
+        elif action == "clear_debt_confirmation":
+            self.handle_clear_debt_confirmation(call, chat_id, user_id, payload)
+        elif action == "confirm_clear_debt":
+            self.handle_confirm_clear_debt(call, chat_id, user_id, payload)
         elif action == "main_menu":
             self.handle_main_menu(call, chat_id, user_id)
         elif action == "close_menu":
@@ -1330,6 +1336,7 @@ class Bot:
             update_draft(draft_id, draft_data, 5, expires_at)
 
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        self.bot.answer_callback_query(call.id)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -1346,7 +1353,6 @@ class Bot:
                 reply_markup=keyboard,
                 parse_mode='HTML'
             )
-            self.bot.answer_callback_query(call.id)
         except Exception as e:
             logger.error(f"Error in handle_balances: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening balances.", show_alert=True)
@@ -1369,6 +1375,61 @@ class Bot:
         except Exception as e:
             logger.error(f"Error in handle_reports: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening reports.", show_alert=True)
+
+    def handle_clear_debt_confirmation(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+        try:
+            debtor_id = int(payload)
+            
+            debt_amount_u5 = get_debt_between_users(debtor_id, user_id)
+            if not debt_amount_u5 or debt_amount_u5 <= 0:
+                self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
+                return
+
+            debtor_name = get_user_display_name(debtor_id)
+            amount_str = format_amount(debt_amount_u5 / 100000)
+
+            text, keyboard = render_clear_debt_confirmation(debtor_name, amount_str, debtor_id)
+            
+            self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Error in handle_clear_debt_confirmation: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred.", show_alert=True)
+
+    def handle_confirm_clear_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+        try:
+            debtor_id = int(payload)
+            payee_id = user_id
+
+            debt_amount_u5 = get_debt_between_users(debtor_id, payee_id)
+            if not debt_amount_u5 or debt_amount_u5 <= 0:
+                self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
+                return
+
+            # To clear the debt, we credit the payee from the debtor
+            upsert_debt(payee_id, debtor_id, debt_amount_u5)
+
+            self.bot.answer_callback_query(call.id, text="✅ Debt cleared!")
+            
+            debtor_name = get_user_display_name(debtor_id)
+            payee_name = get_user_display_name(payee_id)
+            amount_str = format_amount(debt_amount_u5 / 100000)
+            
+            message_text = f"✅ {payee_name} has cleared the debt of {amount_str} from {debtor_name}."
+            self.bot.send_message(chat_id, message_text)
+
+            # Refresh the balances page
+            self.handle_balances(call, chat_id, user_id)
+
+        except Exception as e:
+            logger.error(f"Error in handle_confirm_clear_debt: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while clearing the debt.", show_alert=True)
 
     def handle_main_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:

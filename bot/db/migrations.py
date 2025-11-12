@@ -38,6 +38,9 @@ def run_migrations(conn: sqlite3.Connection):
           UNIQUE(chat_id, user_id)
         );
 
+        CREATE INDEX IF NOT EXISTS idx_group_users_user_id ON group_users (user_id);
+        CREATE INDEX IF NOT EXISTS idx_group_users_chat_id ON group_users (chat_id);
+
         CREATE TABLE IF NOT EXISTS drafts (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           chat_id INTEGER NOT NULL,
@@ -94,6 +97,9 @@ def run_migrations(conn: sqlite3.Connection):
           FOREIGN KEY(from_user_id) REFERENCES users(id),
           FOREIGN KEY(to_user_id) REFERENCES users(id)
         );
+
+        CREATE INDEX IF NOT EXISTS idx_debts_from_user_id ON debts (from_user_id);
+        CREATE INDEX IF NOT EXISTS idx_debts_to_user_id ON debts (to_user_id);
 
         CREATE TABLE IF NOT EXISTS settlements (
           id INTEGER PRIMARY KEY AUTOINCREMENT,

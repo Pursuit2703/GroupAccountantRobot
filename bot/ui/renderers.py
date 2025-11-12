@@ -51,6 +51,7 @@ def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeybo
 def render_balances_page(user_id: int, group_name: str, balance_summary: dict, all_balances: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     user_name = get_user_display_name(user_id)
     text = f"📊 <b>Balances for {group_name}</b>\n\n"
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
     text += f"👤 <b>Your Balance Summary ({user_name})</b>\n"
 
     total_owed = balance_summary.get('total_owed', 0) / 100000
@@ -67,6 +68,7 @@ def render_balances_page(user_id: int, group_name: str, balance_summary: dict, a
 
     if balance_summary['detailed_debts']:
         text += "\n<b>Your Debts:</b>\n"
+        debts_owed_to_user = []
         for debt in balance_summary['detailed_debts']:
             from_user = debt['from_user_display_name']
             to_user = debt['to_user_display_name']
@@ -76,6 +78,13 @@ def render_balances_page(user_id: int, group_name: str, balance_summary: dict, a
                 text += f"• You owe {to_user}: {amount}\n"
             else:
                 text += f"• {from_user} owes you: {amount}\n"
+                debts_owed_to_user.append(debt)
+        
+        if debts_owed_to_user:
+            text += "\n"
+            for debt in debts_owed_to_user:
+                from_user = debt['from_user_display_name']
+                keyboard.add(telebot.types.InlineKeyboardButton(f"🚮 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_confirmation:{debt['from_user_id']}"))
 
     other_balances = [
         debt for debt in all_balances 
@@ -93,7 +102,6 @@ def render_balances_page(user_id: int, group_name: str, balance_summary: dict, a
     if not balance_summary['detailed_debts'] and not other_balances:
         text += "\nEveryone is settled up! 🎉"
 
-    keyboard = telebot.types.InlineKeyboardMarkup()
     keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
     return text, keyboard
 
@@ -168,6 +176,19 @@ def render_settings_page(group_name: str, settings: dict, editor_name: str | Non
     keyboard = telebot.types.InlineKeyboardMarkup()
     keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
     return text, keyboard
+
+
+
+def render_clear_debt_confirmation(debtor_name: str, amount_str: str, debtor_id: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"Are you sure you want to clear the debt of {amount_str} from {debtor_name}?"
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("✅ Yes, Clear Debt", callback_data=f"dm:confirm_clear_debt:{debtor_id}"),
+        telebot.types.InlineKeyboardButton("❌ No, Cancel", callback_data="dm:balances")
+    )
+    return text, keyboard
+
+
 
 
 
