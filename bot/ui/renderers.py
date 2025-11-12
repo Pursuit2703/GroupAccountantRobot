@@ -16,7 +16,7 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         telebot.types.InlineKeyboardButton("➕ Add Expense", callback_data="dm:add_expense"),
-        telebot.types.InlineKeyboardButton("💸 Settle Debt", callback_data="dm:settle_debt")
+        telebot.types.InlineKeyboardButton("💸 Pay Debt", callback_data="dm:pay_debt")
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("📊 Balances", callback_data="dm:balances"),
@@ -661,11 +661,8 @@ def render_help_message() -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     <b>📜 History</b>
     View a list of the most recent transactions in the group.
 
-    <b>📊 My Balance</b>
-    See a summary of who you owe and who owes you.
-
-    <b>📋 All Balances</b>
-    Get an overview of all outstanding debts in the group.
+    <b>📊 Balances</b>
+    See a summary of who you owe and who owes you, as well as other outstanding debts in the group.
 
     <b>⚖️ Fair Splitting & Rounding</b>
     To ensure fairness and Shariah compliance, the bot handles rounding with full transparency.

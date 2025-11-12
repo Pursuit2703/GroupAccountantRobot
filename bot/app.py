@@ -583,8 +583,8 @@ class Bot:
 
         if action == "add_expense":
             self.handle_add_expense_start(call, chat_id, user_id)
-        elif action == "settle_debt":
-            self.handle_settle_debt_start(call, chat_id, user_id)
+        elif action == "pay_debt":
+            self.handle_pay_debt_start(call, chat_id, user_id)
         elif action == "wizard_next":
             self.handle_wizard_next(call, chat_id, user_id)
         elif action == "wizard_back":
@@ -892,7 +892,7 @@ class Bot:
             self.bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
             self.bot.answer_callback_query(call.id)
 
-    def handle_settle_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+    def handle_pay_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
             group = get_group(chat_id)
             if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
