@@ -109,19 +109,20 @@ class Bot:
     def cleanup_old_menus(self):
         while True:
             try:
-                logger.info("Running old menu cleanup...")
                 old_menus = get_groups_with_old_menus(300)
-                for group in old_menus:
-                    chat_id = group['chat_id']
-                    message_id = group['menu_message_id']
-                    logger.info(f"Deleting old menu {message_id} in chat {chat_id}")
-                    try:
-                        self.bot.delete_message(chat_id, message_id)
-                        set_menu_message_id(chat_id, None)
-                    except Exception as e:
-                        logger.error(f"Error deleting old menu {message_id} in chat {chat_id}: {e}")
-                        if "message to delete not found" in str(e).lower():
+                if old_menus:
+                    logger.info("Running old menu cleanup...")
+                    for group in old_menus:
+                        chat_id = group['chat_id']
+                        message_id = group['menu_message_id']
+                        logger.info(f"Deleting old menu {message_id} in chat {chat_id}")
+                        try:
+                            self.bot.delete_message(chat_id, message_id)
                             set_menu_message_id(chat_id, None)
+                        except Exception as e:
+                            logger.error(f"Error deleting old menu {message_id} in chat {chat_id}: {e}")
+                            if "message to delete not found" in str(e).lower():
+                                set_menu_message_id(chat_id, None)
 
             except Exception as e:
                 logger.error(f"Error in cleanup_old_menus: {e}")
@@ -217,14 +218,22 @@ class Bot:
             if not messages:
                 return
             
-            logger.info(f"Processing media group {media_group_id} with {len(messages)} messages.")
             first_message = messages[0]
             chat_id = first_message.chat.id
             user_id = create_user_if_not_exists(first_message.from_user.id, first_message.from_user.username, first_message.from_user.full_name)
+            add_user_to_group_if_not_exists(user_id, chat_id)
+
+            group = get_group(chat_id)
+            active_wizard_user_id = group.get('active_wizard_user_id') if group else None
+
+            if active_wizard_user_id != user_id:
+                return
+
+            logger.info(f"Processing media group {media_group_id} with {len(messages)} messages.")
             active_draft = get_active_draft(chat_id, user_id)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
-                logger.info(f"No active expense or settlement draft for user {user_id} in chat {chat_id}. Ignoring media group.")
+                set_active_wizard_user_id(chat_id, None)
                 return
 
             draft_data = json.loads(active_draft['data_json'])
@@ -286,10 +295,18 @@ class Bot:
         with self.file_processing_lock:
             chat_id = message.chat.id
             user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
+            add_user_to_group_if_not_exists(user_id, chat_id)
+
+            group = get_group(chat_id)
+            active_wizard_user_id = group.get('active_wizard_user_id') if group else None
+
+            if active_wizard_user_id != user_id:
+                return
+
             active_draft = get_active_draft(chat_id, user_id)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
-                logger.info(f"No active expense or settlement draft for user {user_id} in chat {chat_id}. Ignoring single file.")
+                set_active_wizard_user_id(chat_id, None)
                 return
 
             draft_data = json.loads(active_draft['data_json'])
@@ -393,10 +410,53 @@ class Bot:
                     logger.info(f"Ignoring message from {user_id} because a wizard is active for {active_wizard_user_id}")
                     return
 
+                # If no wizard is active for the current user, no need to check for drafts.
+                if active_wizard_user_id != user_id:
+                    return
+
                 active_draft = get_active_draft(message.chat.id, user_id)
 
-                if active_draft and active_draft['type'] == 'expense':
-                    draft_data = json.loads(active_draft['data_json'])
+                if not active_draft:
+                    # The wizard was active, but the draft has expired or was deleted.
+                    # Clean up the wizard lock.
+                    set_active_wizard_user_id(message.chat.id, None)
+                    return
+
+                draft_data = json.loads(active_draft['data_json'])
+                wizard_message_id = draft_data.get('wizard_message_id')
+
+                if not wizard_message_id:
+                    return
+
+                # Check if the wizard message is still alive
+                try:
+                    # We need the keyboard to check if the message is alive without changing it
+                    if active_draft['type'] == 'expense':
+                        _, keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=6, chat_id=message.chat.id, user_id=user_id)
+                    elif active_draft['type'] == 'settlement':
+                        _, keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=4, chat_id=message.chat.id, user_id=user_id)
+                    else:
+                        keyboard = None
+
+                    if keyboard:
+                        self.bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=wizard_message_id, reply_markup=keyboard)
+                except telebot.apihelper.ApiTelegramException as e:
+                    if hasattr(e, 'error_code') and e.error_code == 400:
+                        if "message to edit not found" in e.description:
+                            logger.debug(f"Wizard message {wizard_message_id} not found. Ignoring text message.")
+                            with get_connection() as conn:
+                                conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+                            set_active_wizard_user_id(message.chat.id, None)
+                            return
+                        elif "message is not modified" in e.description:
+                            # This is okay, it means the message is alive.
+                            pass
+                        else:
+                            raise
+                    else:
+                        raise
+
+                if active_draft['type'] == 'expense':
                     current_step = active_draft['step']
                     draft_id = active_draft['id']
 
@@ -426,8 +486,7 @@ class Bot:
                         self.bot.delete_message(message.chat.id, message.message_id)
                         wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=message.chat.id, user_id=user_id)
                         self.bot.edit_message_text(chat_id=message.chat.id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
-                elif active_draft and active_draft['type'] == 'settlement':
-                    draft_data = json.loads(active_draft['data_json'])
+                elif active_draft['type'] == 'settlement':
                     current_step = active_draft['step']
                     draft_id = active_draft['id']
 
