@@ -173,9 +173,13 @@ def render_settings_page(group_name: str, settings: dict, editor_name: str | Non
 
     keyboard = telebot.types.InlineKeyboardMarkup()
 
-    auto_confirm_enabled = internal_user_id in settings.get('auto_confirm_users', [])
-    auto_confirm_text = f"{'✅' if auto_confirm_enabled else '❌'} Auto-Confirm: {'Enabled' if auto_confirm_enabled else 'Disabled'}"
-    keyboard.add(telebot.types.InlineKeyboardButton(auto_confirm_text, callback_data="dm:toggle_auto_confirm"))
+    auto_confirm_expense_enabled = internal_user_id in settings.get('auto_confirm_expense_users', [])
+    auto_confirm_expense_text = f"{'✅' if auto_confirm_expense_enabled else '❌'} Auto-Confirm Expenses: {'Enabled' if auto_confirm_expense_enabled else 'Disabled'}"
+    keyboard.add(telebot.types.InlineKeyboardButton(auto_confirm_expense_text, callback_data="dm:toggle_auto_confirm_expense"))
+
+    auto_confirm_settlement_enabled = internal_user_id in settings.get('auto_confirm_settlement_users', [])
+    auto_confirm_settlement_text = f"{'✅' if auto_confirm_settlement_enabled else '❌'} Auto-Confirm Settlements: {'Enabled' if auto_confirm_settlement_enabled else 'Disabled'}"
+    keyboard.add(telebot.types.InlineKeyboardButton(auto_confirm_settlement_text, callback_data="dm:toggle_auto_confirm_settlement"))
 
     if telegram_user_id in admin_ids:
         keyboard.add(telebot.types.InlineKeyboardButton("🚫 Manage Excluded Members", callback_data="dm:manage_excluded_members"))

@@ -730,29 +730,51 @@ class Bot:
             self.handle_toggle_excluded_member(call, chat_id, user_id, payload)
         elif action == "export_data":
             self.handle_export_data(call, chat_id, user_id)
-        elif action == "toggle_auto_confirm":
-            self.handle_toggle_auto_confirm(call, chat_id, user_id)
+        elif action == "toggle_auto_confirm_expense":
+            self.handle_toggle_auto_confirm_expense(call, chat_id, user_id)
+        elif action == "toggle_auto_confirm_settlement":
+            self.handle_toggle_auto_confirm_settlement(call, chat_id, user_id)
         else:
             self.bot.answer_callback_query(call.id, text=f"❗ Unknown or expired action: {action}", show_alert=True)
 
-    def handle_toggle_auto_confirm(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+    def handle_toggle_auto_confirm_settlement(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
             settings = get_group_settings(chat_id)
-            auto_confirm_users = settings.get('auto_confirm_users', [])
+            auto_confirm_users = settings.get('auto_confirm_settlement_users', [])
             
             if user_id in auto_confirm_users:
                 auto_confirm_users.remove(user_id)
             else:
                 auto_confirm_users.append(user_id)
                 
-            settings['auto_confirm_users'] = auto_confirm_users
+            settings['auto_confirm_settlement_users'] = auto_confirm_users
             update_group_settings(chat_id, settings)
             
             # Refresh the page
             self.handle_settings(call, chat_id, user_id)
             
         except Exception as e:
-            logger.error(f"Error in handle_toggle_auto_confirm: {e}")
+            logger.error(f"Error in handle_toggle_auto_confirm_settlement: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating your auto-confirm setting.", show_alert=True)
+
+    def handle_toggle_auto_confirm_expense(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            settings = get_group_settings(chat_id)
+            auto_confirm_users = settings.get('auto_confirm_expense_users', [])
+            
+            if user_id in auto_confirm_users:
+                auto_confirm_users.remove(user_id)
+            else:
+                auto_confirm_users.append(user_id)
+                
+            settings['auto_confirm_expense_users'] = auto_confirm_users
+            update_group_settings(chat_id, settings)
+            
+            # Refresh the page
+            self.handle_settings(call, chat_id, user_id)
+            
+        except Exception as e:
+            logger.error(f"Error in handle_toggle_auto_confirm_expense: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating your auto-confirm setting.", show_alert=True)
 
     def handle_analytics(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
@@ -1262,7 +1284,7 @@ class Bot:
                 create_expense_debtors(expense_id, debtors, share_u5)
 
                 settings = get_group_settings(chat_id)
-                auto_confirm_users = settings.get('auto_confirm_users', [])
+                auto_confirm_users = settings.get('auto_confirm_expense_users', [])
                 
                 for debtor_id in debtors:
                     if debtor_id in auto_confirm_users:
@@ -1804,6 +1826,13 @@ class Bot:
 
             try:
                 settlement_id = create_settlement(chat_id, from_user_id, to_user_id, amount_u5)
+
+                settings = get_group_settings(chat_id)
+                auto_confirm_users = settings.get('auto_confirm_settlement_users', [])
+
+                if to_user_id in auto_confirm_users:
+                    update_settlement_status(settlement_id, 'confirmed')
+                    upsert_debt(to_user_id, from_user_id, amount_u5)
 
                 for file_info in files:
                     update_file_relation(file_info['file_row_id'], "settlement", settlement_id)
