@@ -122,7 +122,7 @@ class Bot:
     def cleanup_old_records(self):
         while True:
             try:
-                logger.info("Running old records cleanup...")
+                logger.debug("Running old records cleanup...")
 
                 # Clean up old stale drafts
                 stale_drafts = get_old_stale_drafts(1)
@@ -167,7 +167,7 @@ class Bot:
     def cleanup_old_menus(self):
         while True:
             try:
-                logger.info("Running old menu cleanup...")
+                logger.debug("Running old menu cleanup...")
                 old_menus = get_groups_with_old_menus(300)
                 if old_menus:
                     for group in old_menus:
@@ -1850,8 +1850,8 @@ class Bot:
                 to_user_name = get_user_display_name(to_user_id)
 
                 current_debt = get_debt_between_users(from_user_id, to_user_id)
-                is_overpayment = amount_u5 > current_debt
                 new_balance = current_debt - amount_u5
+                is_overpayment = new_balance < 0
 
                 text, keyboard = render_settlement_message(settlement, from_user_name, to_user_name, files, new_balance, is_overpayment)
                 

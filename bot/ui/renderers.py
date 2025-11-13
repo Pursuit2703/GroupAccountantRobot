@@ -18,17 +18,15 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
         telebot.types.InlineKeyboardButton("➕ Add Expense", callback_data="dm:add_expense"),
         telebot.types.InlineKeyboardButton("💸 Pay Debt", callback_data="dm:pay_debt")
     )
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("📊 Balances", callback_data="dm:balances"),
-        telebot.types.InlineKeyboardButton("📈 Reports", callback_data="dm:reports")
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("📂 Reports", callback_data="dm:reports"),
+        telebot.types.InlineKeyboardButton("📊 Balances", callback_data="dm:balances")
     )
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings"),
-        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help"),
+        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings")
     )
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu")
-    )
+    keyboard.add(telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu"))
     return text, keyboard
 
 def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
