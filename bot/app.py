@@ -13,11 +13,11 @@ from bot.db.repos import (
     create_user_if_not_exists,
     create_draft,
     get_active_draft,
-    update_draft,
-    add_user_to_group_if_not_exists,
-    delete_file_by_id,
-    get_group_members,
-    create_expense,
+        get_draft_owner_by_message_id,
+        update_draft,
+        add_user_to_group_if_not_exists,
+        delete_file_by_id,
+        get_group_members,    create_expense,
     create_expense_debtors,
     get_expense,
     get_expense_debtors,
@@ -25,14 +25,13 @@ from bot.db.repos import (
     upsert_debt,
     get_user_display_name,
     get_user,
+    create_group_if_not_exists,
     get_group,
-    set_active_wizard_user_id,
     get_expense_files,
     update_file_relation,
     delete_expense,
     update_group_last_activity,
     get_groups_with_old_menus,
-    set_menu_message_id,
     create_settlement,
     get_settlement,
     update_settlement_status,
@@ -53,6 +52,7 @@ from bot.db.repos import (
     get_old_stale_drafts,
     get_old_rejected_expenses,
     get_old_rejected_settlements,
+    set_active_wizard_user_id,
 )
 from bot.services.draft_service import expire_drafts
 from bot.services.file_service import store_file_ref
@@ -194,68 +194,27 @@ class Bot:
             logger.error(f"Error deleting message {message_id} in chat {chat_id}: {e}")
 
     def handle_menu_command(self, message: telebot.types.Message):
-        if message.chat.type == 'private':
-            self.bot.send_message(message.chat.id, "I only work in group chats.")
-            return
         try:
-            logger.info(f"Received /menu command from user {message.from_user.id} in chat {message.chat.id}")
             chat_id = message.chat.id
-            update_group_last_activity(chat_id)
-
-            user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
-            add_user_to_group_if_not_exists(user_id, chat_id)
             
+            create_group_if_not_exists(chat_id)
+            user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
+            add_user_to_group_if_not_exists(user_id, chat_id)
+
             settings = get_group_settings(chat_id)
             excluded_members = settings.get('excluded_members', [])
             if user_id in excluded_members:
                 self.bot.delete_message(chat_id, message.message_id)
                 return
 
-            with get_connection() as conn:
-                group = get_group(chat_id)
-                if group and group.get('active_wizard_user_id'):
-                    lock_time_iso = group.get('active_wizard_locked_at')
-                    if lock_time_iso:
-                        lock_time = datetime.fromisoformat(lock_time_iso)
-                        if datetime.now() - lock_time > timedelta(seconds=DRAFT_TTL_SECONDS):
-                            logger.info(f"Overriding stale lock for user {group['active_wizard_user_id']} in chat {chat_id}")
-                            set_active_wizard_user_id(chat_id, None)
-                        else:
-                            other_user = get_user_display_name(group['active_wizard_user_id'])
-                            self.bot.send_message(chat_id, f"The menu is currently in use by {other_user}. Please wait a moment.")
-                            self.bot.delete_message(chat_id, message.message_id)
-                            return
-                    else:
-                        set_active_wizard_user_id(chat_id, None)
-
-                cursor = conn.cursor()
-                cursor.execute("SELECT menu_message_id FROM groups WHERE chat_id = ?", (chat_id,))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    try:
-                        self.bot.delete_message(chat_id, row[0])
-                    except Exception as e:
-                        logger.error(f"Error deleting old menu message {row[0]}: {e}")
-
             chat_info = self.bot.get_chat(chat_id)
             group_name = chat_info.title if chat_info.title else "Your Group Name"
             menu_text, menu_keyboard = render_main_menu(group_name=group_name)
-            sent_message = self.bot.send_message(
+            self.bot.send_message(
                 chat_id=chat_id,
                 text=menu_text,
                 reply_markup=menu_keyboard
             )
-            
-            with get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO groups (chat_id, menu_message_id, menu_message_created_at, last_activity_at)
-                    VALUES (?, ?, datetime('now', 'utc'), datetime('now', 'utc'))
-                    ON CONFLICT(chat_id) DO UPDATE SET
-                        menu_message_id = excluded.menu_message_id,
-                        menu_message_created_at = excluded.menu_message_created_at,
-                        last_activity_at = datetime('now', 'utc')
-                """, (chat_id, sent_message.message_id))
 
             self.bot.delete_message(chat_id, message.message_id)
         except Exception as e:
@@ -290,17 +249,9 @@ class Bot:
             user_id = create_user_if_not_exists(first_message.from_user.id, first_message.from_user.username, first_message.from_user.full_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
 
-            group = get_group(chat_id)
-            active_wizard_user_id = group.get('active_wizard_user_id') if group else None
-
-            if active_wizard_user_id != user_id:
-                return
-
-            logger.info(f"Processing media group {media_group_id} with {len(messages)} messages.")
             active_draft = get_active_draft(chat_id, user_id)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
-                set_active_wizard_user_id(chat_id, None)
                 return
 
             draft_data = json.loads(active_draft['data_json'])
@@ -364,16 +315,9 @@ class Bot:
             user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
 
-            group = get_group(chat_id)
-            active_wizard_user_id = group.get('active_wizard_user_id') if group else None
-
-            if active_wizard_user_id != user_id:
-                return
-
             active_draft = get_active_draft(chat_id, user_id)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
-                set_active_wizard_user_id(chat_id, None)
                 return
 
             draft_data = json.loads(active_draft['data_json'])
@@ -465,6 +409,7 @@ class Bot:
             return
         try:
             chat_id = message.chat.id
+            create_group_if_not_exists(chat_id)
             with get_connection() as conn:
                 logger.info(f"Received text message from user {message.from_user.id} in chat {chat_id}: {message.text}")
                 update_group_last_activity(chat_id)
@@ -478,23 +423,9 @@ class Bot:
                         self.bot.delete_message(chat_id, message.message_id)
                     return
 
-                group = get_group(chat_id)
-                active_wizard_user_id = group.get('active_wizard_user_id') if group else None
-
-                if active_wizard_user_id and active_wizard_user_id != user_id:
-                    logger.info(f"Ignoring message from {user_id} because a wizard is active for {active_wizard_user_id}")
-                    return
-
-                # If no wizard is active for the current user, no need to check for drafts.
-                if active_wizard_user_id != user_id:
-                    return
-
                 active_draft = get_active_draft(chat_id, user_id)
 
                 if not active_draft:
-                    # The wizard was active, but the draft has expired or was deleted.
-                    # Clean up the wizard lock.
-                    set_active_wizard_user_id(chat_id, None)
                     return
 
                 draft_data = json.loads(active_draft['data_json'])
@@ -523,7 +454,6 @@ class Bot:
                             logger.debug(f"Wizard message {wizard_message_id} not found. Ignoring text message.")
                             with get_connection() as conn:
                                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-                            set_active_wizard_user_id(chat_id, None)
                             return
                         elif "message is not modified" in e.description:
                             # This is okay, it means the message is alive.
@@ -544,7 +474,12 @@ class Bot:
                                 self.bot.delete_message(message.chat.id, message.message_id)
                                 warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be greater than zero.")
                                 threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
-                                return                            
+                                return
+                            if amount >= 1_000_000_000:
+                                self.bot.delete_message(message.chat.id, message.message_id)
+                                warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be less than 1,000,000,000.")
+                                threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                                return
                             draft_data['amount'] = amount
                             current_step += 1
                             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
@@ -575,6 +510,11 @@ class Bot:
                                 warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be greater than zero.")
                                 threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                                 return
+                            if amount >= 1_000_000_000:
+                                self.bot.delete_message(message.chat.id, message.message_id)
+                                warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be less than 1,000,000,000.")
+                                threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                                return
                             draft_data['amount'] = amount
                             current_step += 1
                             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
@@ -589,6 +529,11 @@ class Bot:
                 elif active_draft['type'] == 'clear_debt':
                     try:
                         amount = float(message.text)
+                        if amount >= 1_000_000_000:
+                            self.bot.delete_message(message.chat.id, message.message_id)
+                            warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be less than 1,000,000,000.")
+                            threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                            return
                         total_debt = draft_data['total_debt_u5'] / 100000
                         if not (0 < amount <= total_debt):
                             self.bot.delete_message(message.chat.id, message.message_id)
@@ -650,21 +595,37 @@ class Bot:
         user_id = create_user_if_not_exists(call.from_user.id, call.from_user.username, call.from_user.full_name)
         add_user_to_group_if_not_exists(user_id, chat_id)
 
+        # Check if the message being interacted with is an active wizard message for someone else.
+        wizard_owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
+        if wizard_owner_id and wizard_owner_id != user_id:
+            owner_name = get_user_display_name(wizard_owner_id)
+            self.bot.answer_callback_query(call.id, f"This is an active wizard for {owner_name}.", show_alert=True)
+            return
+
+        # For wizard-specific actions, ensure the user has an active draft.
+        WIZARD_ACTIONS = [
+            "wizard_next", "wizard_back", "wizard_cancel", "wizard_confirm", 
+            "wizard_no_receipt", "set_category", "toggle_debtor", "toggle_all_debtors",
+            "edit_amount", "edit_files", "edit_category_desc", "edit_debtors", "delete_file",
+            "settle_wizard_next", "settle_wizard_back", "settle_wizard_cancel", "settle_confirm",
+            "toggle_payee", "settle_edit_step", "settle_full_amount", "settle_no_proof",
+            "clear_full_debt", "clear_debt_cancel", "confirm_clear_debt"
+        ]
+        if action in WIZARD_ACTIONS:
+            active_draft = get_active_draft(chat_id, user_id)
+            if not active_draft:
+                self.bot.answer_callback_query(call.id, "❗ This wizard has expired or been cancelled.", show_alert=True)
+                try:
+                    self.bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    pass
+                return
+
         settings = get_group_settings(chat_id)
         excluded_members = settings.get('excluded_members', [])
         if user_id in excluded_members:
             self.bot.answer_callback_query(call.id)
             return
-
-        group = get_group(chat_id)
-        active_wizard_user_id = group.get('active_wizard_user_id') if group else None
-
-        # Allow starting a new expense even if another wizard is active, as handle_add_expense_start has its own logic.
-        if action not in [ "add_expense", "settle_debt", "confirm_debt", "reject_debt", "confirm_settlement", "reject_settlement" ]:
-            if active_wizard_user_id and active_wizard_user_id != user_id:
-                other_user_display_name = get_user_display_name(active_wizard_user_id)
-                self.bot.answer_callback_query(call.id, text=f"❗ The menu is currently in use by {other_user_display_name}. Please wait.", show_alert=True)
-                return
 
         if action == "add_expense":
             self.handle_add_expense_start(call, chat_id, user_id)
@@ -1323,11 +1284,18 @@ class Bot:
 
                 settings = get_group_settings(chat_id)
                 auto_confirm_users = settings.get('auto_confirm_expense_users', [])
-                
+
                 for debtor_id in debtors:
                     if debtor_id in auto_confirm_users:
                         update_debtor_status(expense_id, debtor_id, 'confirmed')
-                        upsert_debt(debtor_id, payer_id, share_u5)
+
+                # NEW: Check if all debtors were auto-confirmed and create debts if so
+                expense_debtors_after_auto_confirm = get_expense_debtors(expense_id)
+                all_confirmed = all(d['status'] == 'confirmed' for d in expense_debtors_after_auto_confirm)
+
+                if all_confirmed:
+                    for debtor in expense_debtors_after_auto_confirm:
+                        upsert_debt(debtor['debtor_id'], payer_id, debtor['share_u5'])
 
                 for file_info in files:
                     update_file_relation(file_info['file_row_id'], "expense", expense_id)
@@ -1336,11 +1304,9 @@ class Bot:
                 with get_connection() as conn:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
 
-                set_active_wizard_user_id(chat_id, None)
                 
                 # Delete the wizard message
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                set_menu_message_id(chat_id, None)
                 
                 # Send expense message
                 expense = get_expense(expense_id)
@@ -1517,7 +1483,6 @@ class Bot:
                         delete_file_by_id(file_info['file_row_id'])
                 with get_connection() as conn:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-                set_active_wizard_user_id(chat_id, None)
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
                 self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
@@ -1629,11 +1594,22 @@ class Bot:
             with get_connection() as conn:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
         
-        set_active_wizard_user_id(chat_id, None)
         self.handle_balances(call, chat_id, user_id)
 
     def handle_clear_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
         try:
+            group = get_group(chat_id)
+            if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
+                lock_time = datetime.fromisoformat(group['active_wizard_locked_at'])
+                if datetime.now() - lock_time > timedelta(seconds=DRAFT_TTL_SECONDS):
+                    logger.info(f"Overriding stale lock for user {group['active_wizard_user_id']} in chat {chat_id}")
+                    set_active_wizard_user_id(chat_id, None)
+                else:
+                    other_user = get_user_display_name(group['active_wizard_user_id'])
+                    self.bot.answer_callback_query(call.id, f"❗ The menu is currently in use by {other_user}. Please wait.", show_alert=True)
+                    return
+
+            set_active_wizard_user_id(chat_id, user_id)
             debtor_id = int(payload)
             
             debt_amount_u5 = get_debt_between_users(debtor_id, user_id)
@@ -1641,7 +1617,6 @@ class Bot:
                 self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
                 return
 
-            set_active_wizard_user_id(chat_id, user_id)
             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
             draft_id = create_draft(chat_id, user_id, "clear_debt", expires_at)
             
@@ -1694,7 +1669,6 @@ class Bot:
             # Clean up
             with get_connection() as conn:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-            set_active_wizard_user_id(chat_id, None)
 
             # Refresh the balances page
             self.handle_balances(call, chat_id, user_id)
@@ -1705,7 +1679,13 @@ class Bot:
 
     def handle_main_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
-            set_active_wizard_user_id(chat_id, None)
+            # If this message was an active wizard, delete the corresponding draft.
+            owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
+            if owner_id:
+                logger.info(f"User {user_id} is resetting a wizard owned by {owner_id} back to the main menu. Deleting draft.")
+                with get_connection() as conn:
+                    conn.execute("DELETE FROM drafts WHERE user_id = ? AND chat_id = ?", (owner_id, chat_id))
+
             set_settings_editor_id(chat_id, None)
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -1726,18 +1706,14 @@ class Bot:
 
     def handle_close_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
-            # Check if the closed menu was an active wizard for any user
-            with get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT id, user_id FROM drafts WHERE chat_id = ? AND data_json LIKE ?", (chat_id, f'%"{call.message.message_id}"%'))
-                draft_to_delete = cursor.fetchone()
-                if draft_to_delete:
-                    logger.info(f"Closed menu was an active wizard for user {draft_to_delete['user_id']}. Deleting draft {draft_to_delete['id']}.")
-                    cursor.execute("DELETE FROM drafts WHERE id = ?", (draft_to_delete['id'],))
-                    set_active_wizard_user_id(chat_id, None)
+            # If this message was an active wizard, delete the corresponding draft.
+            owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
+            if owner_id:
+                logger.info(f"User {user_id} is closing a wizard owned by {owner_id}. Deleting draft.")
+                with get_connection() as conn:
+                    conn.execute("DELETE FROM drafts WHERE user_id = ? AND chat_id = ?", (owner_id, chat_id))
 
             self.bot.delete_message(chat_id, call.message.message_id)
-            set_menu_message_id(chat_id, None)
             self.bot.answer_callback_query(call.id, text="Menu closed.")
         except Exception as e:
             logger.error(f"Error in handle_close_menu: {e}")
@@ -1814,7 +1790,6 @@ class Bot:
                     delete_file_by_id(file_info['file_row_id'])
             with get_connection() as conn:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-            set_active_wizard_user_id(chat_id, None)
             self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
             self.bot.answer_callback_query(call.id, text="Settlement draft cancelled.")
 
@@ -1904,6 +1879,7 @@ class Bot:
             files = draft_data.get('files', [])
 
             try:
+                current_debt = get_owed_amount(from_user_id, to_user_id)
                 settlement_id = create_settlement(chat_id, from_user_id, to_user_id, amount_u5)
 
                 settings = get_group_settings(chat_id)
@@ -1919,16 +1895,13 @@ class Bot:
                 with get_connection() as conn:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
 
-                set_active_wizard_user_id(chat_id, None)
                 
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                set_menu_message_id(chat_id, None)
                 
                 settlement = get_settlement(settlement_id)
                 from_user_name = get_user_display_name(from_user_id)
                 to_user_name = get_user_display_name(to_user_id)
 
-                current_debt = get_debt_between_users(from_user_id, to_user_id)
                 new_balance = current_debt - amount_u5
                 is_overpayment = new_balance < 0
 

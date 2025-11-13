@@ -313,6 +313,8 @@ def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: 
     # Dynamic text based on step
     if current_step == 1:
         text += "Enter the total amount."
+        if 'amount' in draft_data:
+            text += f"\n\n<i>Current amount: {format_amount(draft_data['amount'])}</i>"
     elif current_step == 2:
         text += "Send one or more receipts (images or PDFs)."
     elif current_step == 3:
@@ -444,7 +446,7 @@ def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: 
     elif current_step == 4:
         text += "Everything look correct? You can still go back or edit details."
         payee_name = get_user_display_name(draft_data['payee'])
-        current_debt = get_debt_between_users(user_id, draft_data['payee']) / 100000
+        current_debt = get_owed_amount(user_id, draft_data['payee']) / 100000
         if draft_data.get('amount', 0) > current_debt and current_debt > 0:
             new_balance = draft_data['amount'] - current_debt
             if new_balance > 0.01:

@@ -5,6 +5,10 @@ from bot.db.connection import get_connection
 from bot.logger import get_logger
 logger = get_logger(__name__)
 
+def create_group_if_not_exists(chat_id: int):
+    with get_connection() as conn:
+        conn.execute("INSERT OR IGNORE INTO groups (chat_id, last_activity_at) VALUES (?, datetime('now', 'utc'))", (chat_id,))
+
 def get_group(chat_id: int) -> dict | None:
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -82,6 +86,17 @@ def get_draft_by_id(draft_id: int) -> dict | None:
         cursor.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+def get_draft_owner_by_message_id(chat_id: int, message_id: int) -> int | None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id FROM drafts
+            WHERE chat_id = ? AND json_extract(data_json, '$.wizard_message_id') = ?
+        """, (chat_id, message_id))
+        row = cursor.fetchone()
+        return row['user_id'] if row else None
+
 
 def get_active_draft(chat_id: int, user_id: int) -> dict | None:
     with get_connection() as conn:
