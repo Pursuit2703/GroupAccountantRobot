@@ -82,7 +82,7 @@ def render_balances_page(user_id: int, group_name: str, balance_summary: dict, a
             text += "\n"
             for debt in debts_owed_to_user:
                 from_user = debt['from_user_display_name']
-                keyboard.add(telebot.types.InlineKeyboardButton(f"🚮 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_confirmation:{debt['from_user_id']}"))
+                keyboard.add(telebot.types.InlineKeyboardButton(f"🚮 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_start:{debt['from_user_id']}"))
 
     other_balances = [
         debt for debt in all_balances 
@@ -214,6 +214,36 @@ def render_clear_debt_confirmation(debtor_name: str, amount_str: str, debtor_id:
         telebot.types.InlineKeyboardButton("✅ Yes, Clear Debt", callback_data=f"dm:confirm_clear_debt:{debtor_id}"),
         telebot.types.InlineKeyboardButton("❌ No, Cancel", callback_data="dm:balances")
     )
+    return text, keyboard
+
+def render_clear_debt_wizard(mode: str, draft_data: dict) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    debtor_id = draft_data['debtor_id']
+    debtor_name = get_user_display_name(debtor_id)
+    total_debt_u5 = draft_data['total_debt_u5']
+    total_debt_str = format_amount(total_debt_u5 / 100000)
+    
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+
+    if mode == 'prompt':
+        text = f"💸 <b>Clear Debt for {debtor_name}</b>\n\n"
+        text += f"They owe you a total of {total_debt_str}.\n\n"
+        text += "Please enter the amount you want to clear."
+        
+        keyboard.add(
+            telebot.types.InlineKeyboardButton("💰 Clear Full Amount", callback_data=f"dm:clear_full_debt"),
+            telebot.types.InlineKeyboardButton("❌ Cancel", callback_data=f"dm:clear_debt_cancel")
+        )
+    elif mode == 'confirm':
+        amount_to_clear_str = format_amount(draft_data['amount_to_clear'])
+        text = f"💸 <b>Confirm Debt Clearance</b>\n\n"
+        text += f"You are about to clear <b>{amount_to_clear_str}</b> of debt from {debtor_name}.\n\n"
+        text += "Are you sure?"
+
+        keyboard.add(
+            telebot.types.InlineKeyboardButton("✅ Yes, I'm sure", callback_data=f"dm:confirm_clear_debt:{debtor_id}"),
+            telebot.types.InlineKeyboardButton("❌ No, go back", callback_data=f"dm:clear_debt_start:{debtor_id}")
+        )
+    
     return text, keyboard
 
 

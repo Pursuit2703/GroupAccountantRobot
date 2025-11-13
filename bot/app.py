@@ -59,7 +59,7 @@ from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
-from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page, render_clear_debt_confirmation, render_excluded_members_page
+from bot.ui.renderers import render_add_expense_wizard, render_main_menu, render_expense_message, render_history_message, render_settle_debt_wizard, render_settlement_message, render_help_message, render_analytics_page, render_spending_by_category, render_who_paid_how_much, render_settings_page, render_reports_menu, render_balances_page, render_clear_debt_confirmation, render_excluded_members_page, render_clear_debt_wizard
 
 logger = get_logger(__name__)
 
@@ -464,20 +464,21 @@ class Bot:
         if message.chat.type == 'private':
             return
         try:
+            chat_id = message.chat.id
             with get_connection() as conn:
-                logger.info(f"Received text message from user {message.from_user.id} in chat {message.chat.id}: {message.text}")
-                update_group_last_activity(message.chat.id)
+                logger.info(f"Received text message from user {message.from_user.id} in chat {chat_id}: {message.text}")
+                update_group_last_activity(chat_id)
                 user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
-                add_user_to_group_if_not_exists(user_id, message.chat.id)
+                add_user_to_group_if_not_exists(user_id, chat_id)
                 
-                settings = get_group_settings(message.chat.id)
+                settings = get_group_settings(chat_id)
                 excluded_members = settings.get('excluded_members', [])
                 if user_id in excluded_members:
                     if message.text == '/menu':
-                        self.bot.delete_message(message.chat.id, message.message_id)
+                        self.bot.delete_message(chat_id, message.message_id)
                     return
 
-                group = get_group(message.chat.id)
+                group = get_group(chat_id)
                 active_wizard_user_id = group.get('active_wizard_user_id') if group else None
 
                 if active_wizard_user_id and active_wizard_user_id != user_id:
@@ -488,12 +489,12 @@ class Bot:
                 if active_wizard_user_id != user_id:
                     return
 
-                active_draft = get_active_draft(message.chat.id, user_id)
+                active_draft = get_active_draft(chat_id, user_id)
 
                 if not active_draft:
                     # The wizard was active, but the draft has expired or was deleted.
                     # Clean up the wizard lock.
-                    set_active_wizard_user_id(message.chat.id, None)
+                    set_active_wizard_user_id(chat_id, None)
                     return
 
                 draft_data = json.loads(active_draft['data_json'])
@@ -506,21 +507,23 @@ class Bot:
                 try:
                     # We need the keyboard to check if the message is alive without changing it
                     if active_draft['type'] == 'expense':
-                        _, keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=6, chat_id=message.chat.id, user_id=user_id)
+                        _, keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=6, chat_id=chat_id, user_id=user_id)
                     elif active_draft['type'] == 'settlement':
-                        _, keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=4, chat_id=message.chat.id, user_id=user_id)
+                        _, keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=4, chat_id=chat_id, user_id=user_id)
+                    elif active_draft['type'] == 'clear_debt':
+                        _, keyboard = render_clear_debt_wizard(mode='prompt', draft_data=draft_data)
                     else:
                         keyboard = None
 
                     if keyboard:
-                        self.bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=wizard_message_id, reply_markup=keyboard)
+                        self.bot.edit_message_reply_markup(chat_id=chat_id, message_id=wizard_message_id, reply_markup=keyboard)
                 except telebot.apihelper.ApiTelegramException as e:
                     if hasattr(e, 'error_code') and e.error_code == 400:
                         if "message to edit not found" in e.description:
                             logger.debug(f"Wizard message {wizard_message_id} not found. Ignoring text message.")
                             with get_connection() as conn:
                                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-                            set_active_wizard_user_id(message.chat.id, None)
+                            set_active_wizard_user_id(chat_id, None)
                             return
                         elif "message is not modified" in e.description:
                             # This is okay, it means the message is alive.
@@ -583,6 +586,37 @@ class Bot:
                             self.bot.delete_message(message.chat.id, message.message_id)
                             warning_msg = self.bot.send_message(message.chat.id, "❗ Invalid amount. Please enter a number.")
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                elif active_draft['type'] == 'clear_debt':
+                    try:
+                        amount = float(message.text)
+                        total_debt = draft_data['total_debt_u5'] / 100000
+                        if not (0 < amount <= total_debt):
+                            self.bot.delete_message(message.chat.id, message.message_id)
+                            warning_msg = self.bot.send_message(message.chat.id, f"❗ Amount must be between 0 and {total_debt}.")
+                            threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                            return
+                        
+                        draft_data['amount_to_clear'] = amount
+                        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                        update_draft(active_draft['id'], draft_data, 2, expires_at)
+                        self.bot.delete_message(message.chat.id, message.message_id)
+                        
+                        text, keyboard = render_clear_debt_wizard(mode='confirm', draft_data=draft_data)
+                        try:
+                            self.bot.edit_message_text(chat_id=message.chat.id, message_id=draft_data['wizard_message_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
+                        except telebot.apihelper.ApiTelegramException as e:
+                            if e.result.status_code == 400 and "message to edit not found" in e.result.text:
+                                logger.warning(f"Wizard message {draft_data['wizard_message_id']} not found for clear_debt. Cleaning up draft.")
+                                with get_connection() as conn:
+                                    conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+                                set_active_wizard_user_id(chat_id, None)
+                            else:
+                                raise
+
+                    except ValueError:
+                        self.bot.delete_message(message.chat.id, message.message_id)
+                        warning_msg = self.bot.send_message(message.chat.id, "❗ Invalid amount. Please enter a number.")
+                        threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
 
         except Exception as e:
             logger.error(f"Error in handle_text_message: {e}")
@@ -676,8 +710,12 @@ class Bot:
             self.handle_reports(call, chat_id, user_id)
         elif action == "noop":
             self.bot.answer_callback_query(call.id)
-        elif action == "clear_debt_confirmation":
-            self.handle_clear_debt_confirmation(call, chat_id, user_id, payload)
+        elif action == "clear_debt_start":
+            self.handle_clear_debt_start(call, chat_id, user_id, payload)
+        elif action == "clear_full_debt":
+            self.handle_clear_full_debt(call, chat_id, user_id)
+        elif action == "clear_debt_cancel":
+            self.handle_clear_debt_cancel(call, chat_id, user_id)
         elif action == "confirm_clear_debt":
             self.handle_confirm_clear_debt(call, chat_id, user_id, payload)
         elif action == "main_menu":
@@ -1569,7 +1607,32 @@ class Bot:
             logger.error(f"Error in handle_reports: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening reports.", show_alert=True)
 
-    def handle_clear_debt_confirmation(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+    def handle_clear_full_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        active_draft = get_active_draft(chat_id, user_id)
+        if not active_draft or active_draft['type'] != 'clear_debt':
+            self.bot.answer_callback_query(call.id, text="❗ This action has expired.", show_alert=True)
+            return
+        
+        draft_data = json.loads(active_draft['data_json'])
+        draft_data['amount_to_clear'] = draft_data['total_debt_u5'] / 100000
+        
+        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+        update_draft(active_draft['id'], draft_data, 2, expires_at)
+        
+        text, keyboard = render_clear_debt_wizard(mode='confirm', draft_data=draft_data)
+        self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=text, reply_markup=keyboard, parse_mode='HTML')
+        self.bot.answer_callback_query(call.id)
+
+    def handle_clear_debt_cancel(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        active_draft = get_active_draft(chat_id, user_id)
+        if active_draft and active_draft['type'] == 'clear_debt':
+            with get_connection() as conn:
+                conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+        
+        set_active_wizard_user_id(chat_id, None)
+        self.handle_balances(call, chat_id, user_id)
+
+    def handle_clear_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
         try:
             debtor_id = int(payload)
             
@@ -1578,10 +1641,18 @@ class Bot:
                 self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
                 return
 
-            debtor_name = get_user_display_name(debtor_id)
-            amount_str = format_amount(debt_amount_u5 / 100000)
+            set_active_wizard_user_id(chat_id, user_id)
+            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            draft_id = create_draft(chat_id, user_id, "clear_debt", expires_at)
+            
+            draft_data = {
+                'debtor_id': debtor_id,
+                'total_debt_u5': debt_amount_u5,
+                'wizard_message_id': call.message.message_id
+            }
+            update_draft(draft_id, draft_data, 1, expires_at)
 
-            text, keyboard = render_clear_debt_confirmation(debtor_name, amount_str, debtor_id)
+            text, keyboard = render_clear_debt_wizard(mode='prompt', draft_data=draft_data)
             
             self.bot.edit_message_text(
                 chat_id=chat_id,
@@ -1590,42 +1661,40 @@ class Bot:
                 reply_markup=keyboard,
                 parse_mode='HTML'
             )
-
-            message_id = call.message.message_id
-            timer = threading.Timer(3600, self.delete_message, [chat_id, message_id])
-            self.clear_debt_timers[message_id] = timer
-            timer.start()
-
             self.bot.answer_callback_query(call.id)
         except Exception as e:
-            logger.error(f"Error in handle_clear_debt_confirmation: {e}")
+            logger.error(f"Error in handle_clear_debt_start: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred.", show_alert=True)
 
     def handle_confirm_clear_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
-        message_id = call.message.message_id
-        if message_id in self.clear_debt_timers:
-            self.clear_debt_timers.pop(message_id).cancel()
+        active_draft = get_active_draft(chat_id, user_id)
+        if not active_draft or active_draft['type'] != 'clear_debt':
+            self.bot.answer_callback_query(call.id, text="❗ This action has expired.", show_alert=True)
+            return
 
         try:
-            debtor_id = int(payload)
+            draft_data = json.loads(active_draft['data_json'])
+            debtor_id = draft_data['debtor_id']
             payee_id = user_id
-
-            debt_amount_u5 = get_debt_between_users(debtor_id, payee_id)
-            if not debt_amount_u5 or debt_amount_u5 <= 0:
-                self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
-                return
+            amount_to_clear = draft_data['amount_to_clear']
+            amount_to_clear_u5 = int(amount_to_clear * 100000)
 
             # To clear the debt, we credit the payee from the debtor
-            upsert_debt(payee_id, debtor_id, debt_amount_u5)
+            upsert_debt(payee_id, debtor_id, amount_to_clear_u5)
 
             self.bot.answer_callback_query(call.id, text="✅ Debt cleared!")
             
             debtor_name = get_user_display_name(debtor_id)
             payee_name = get_user_display_name(payee_id)
-            amount_str = format_amount(debt_amount_u5 / 100000)
+            amount_str = format_amount(amount_to_clear)
             
-            message_text = f"✅ {payee_name} has cleared the debt of {amount_str} from {debtor_name}."
+            message_text = f"✅ {payee_name} has cleared a debt of {amount_str} from {debtor_name}."
             self.bot.send_message(chat_id, message_text)
+
+            # Clean up
+            with get_connection() as conn:
+                conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+            set_active_wizard_user_id(chat_id, None)
 
             # Refresh the balances page
             self.handle_balances(call, chat_id, user_id)
@@ -1657,6 +1726,16 @@ class Bot:
 
     def handle_close_menu(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
+            # Check if the closed menu was an active wizard for any user
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, user_id FROM drafts WHERE chat_id = ? AND data_json LIKE ?", (chat_id, f'%"{call.message.message_id}"%'))
+                draft_to_delete = cursor.fetchone()
+                if draft_to_delete:
+                    logger.info(f"Closed menu was an active wizard for user {draft_to_delete['user_id']}. Deleting draft {draft_to_delete['id']}.")
+                    cursor.execute("DELETE FROM drafts WHERE id = ?", (draft_to_delete['id'],))
+                    set_active_wizard_user_id(chat_id, None)
+
             self.bot.delete_message(chat_id, call.message.message_id)
             set_menu_message_id(chat_id, None)
             self.bot.answer_callback_query(call.id, text="Menu closed.")
