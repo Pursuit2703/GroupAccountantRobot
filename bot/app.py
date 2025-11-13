@@ -50,7 +50,9 @@ from bot.db.repos import (
     get_debt_between_users,
     get_group_settings,
     update_group_settings,
-    # create_or_update_group_menu,
+    get_old_stale_drafts,
+    get_old_rejected_expenses,
+    get_old_rejected_settlements,
 )
 from bot.services.draft_service import expire_drafts
 from bot.services.file_service import store_file_ref
@@ -67,6 +69,7 @@ class Bot:
         self.media_group_cache = {}
         self.media_group_timers = {}
         self.user_locks = set()
+        self.clear_debt_timers = {}
         self.file_processing_lock = threading.Lock()
         self.setup_handlers()
 
@@ -110,22 +113,70 @@ class Bot:
         cleanup_thread = threading.Thread(target=self.cleanup_old_menus, daemon=True)
         cleanup_thread.start()
 
+        old_records_cleanup_thread = threading.Thread(target=self.cleanup_old_records, daemon=True)
+        old_records_cleanup_thread.start()
+
         logger.info("Starting bot polling...")
         self.bot.polling(none_stop=True)
+
+    def cleanup_old_records(self):
+        while True:
+            try:
+                logger.info("Running old records cleanup...")
+
+                # Clean up old stale drafts
+                stale_drafts = get_old_stale_drafts(1)
+                for draft in stale_drafts:
+                    try:
+                        draft_data = json.loads(draft['data_json'])
+                        if 'wizard_message_id' in draft_data:
+                            self.bot.delete_message(draft['chat_id'], draft_data['wizard_message_id'])
+                        with get_connection() as conn:
+                            conn.execute("DELETE FROM drafts WHERE id = ?", (draft['id'],))
+                        logger.info(f"Deleted stale draft {draft['id']} in chat {draft['chat_id']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting stale draft {draft['id']}: {e}")
+
+                # Clean up old rejected expenses
+                rejected_expenses = get_old_rejected_expenses(1)
+                for expense in rejected_expenses:
+                    try:
+                        if expense['message_id']:
+                            self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                        delete_expense(expense['id'])
+                        logger.info(f"Deleted rejected expense {expense['id']} in chat {expense['chat_id']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting rejected expense {expense['id']}: {e}")
+
+                # Clean up old rejected settlements
+                rejected_settlements = get_old_rejected_settlements(1)
+                for settlement in rejected_settlements:
+                    try:
+                        if settlement['message_id']:
+                            self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                        delete_settlement(settlement['id'])
+                        logger.info(f"Deleted rejected settlement {settlement['id']} in chat {settlement['chat_id']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting rejected settlement {settlement['id']}: {e}")
+
+            except Exception as e:
+                logger.error(f"Error in cleanup_old_records: {e}")
+            
+            time.sleep(3600) # Sleep for 1 hour
 
     def cleanup_old_menus(self):
         while True:
             try:
+                logger.info("Running old menu cleanup...")
                 old_menus = get_groups_with_old_menus(300)
                 if old_menus:
-                    logger.info("Running old menu cleanup...")
                     for group in old_menus:
                         chat_id = group['chat_id']
                         message_id = group['menu_message_id']
-                        logger.info(f"Deleting old menu {message_id} in chat {chat_id}")
                         try:
                             self.bot.delete_message(chat_id, message_id)
                             set_menu_message_id(chat_id, None)
+                            logger.info(f"Deleted old menu {message_id} in chat {chat_id}")
                         except Exception as e:
                             logger.error(f"Error deleting old menu {message_id} in chat {chat_id}: {e}")
                             if "message to delete not found" in str(e).lower():
@@ -1408,13 +1459,6 @@ class Bot:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
                 set_active_wizard_user_id(chat_id, None)
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                
-                group_info = self.bot.get_chat(chat_id)
-                group_name = group_info.title if group_info.title else "Your Group Name"
-                menu_text, menu_keyboard = render_main_menu(group_name=group_name)
-                sent_message = self.bot.send_message(chat_id, menu_text, reply_markup=menu_keyboard)
-                create_or_update_group_menu(chat_id, sent_message.message_id)
-
                 self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
     def handle_edit_expense(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
@@ -1459,6 +1503,10 @@ class Bot:
             update_draft(draft_id, draft_data, 5, expires_at)
 
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        message_id = call.message.message_id
+        if message_id in self.clear_debt_timers:
+            self.clear_debt_timers.pop(message_id).cancel()
+            
         self.bot.answer_callback_query(call.id)
         try:
             group_info = self.bot.get_chat(chat_id)
@@ -1520,12 +1568,22 @@ class Bot:
                 reply_markup=keyboard,
                 parse_mode='HTML'
             )
+
+            message_id = call.message.message_id
+            timer = threading.Timer(3600, self.delete_message, [chat_id, message_id])
+            self.clear_debt_timers[message_id] = timer
+            timer.start()
+
             self.bot.answer_callback_query(call.id)
         except Exception as e:
             logger.error(f"Error in handle_clear_debt_confirmation: {e}")
             self.bot.answer_callback_query(call.id, text="❗ An error occurred.", show_alert=True)
 
     def handle_confirm_clear_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+        message_id = call.message.message_id
+        if message_id in self.clear_debt_timers:
+            self.clear_debt_timers.pop(message_id).cancel()
+
         try:
             debtor_id = int(payload)
             payee_id = user_id
@@ -1657,13 +1715,6 @@ class Bot:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
             set_active_wizard_user_id(chat_id, None)
             self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-            
-            group_info = self.bot.get_chat(chat_id)
-            group_name = group_info.title if group_info.title else "Your Group Name"
-            menu_text, menu_keyboard = render_main_menu(group_name=group_name)
-            sent_message = self.bot.send_message(chat_id, menu_text, reply_markup=menu_keyboard)
-            create_or_update_group_menu(chat_id, sent_message.message_id)
-
             self.bot.answer_callback_query(call.id, text="Settlement draft cancelled.")
 
     def handle_toggle_payee(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payee_id: int):

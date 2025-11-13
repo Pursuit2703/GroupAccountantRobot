@@ -546,6 +546,41 @@ def get_spending_by_category(chat_id: int) -> list[dict]:
         """, (chat_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+
+def get_old_stale_drafts(hours: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, chat_id, data_json
+            FROM drafts
+            WHERE created_at < datetime('now', '-' || ? || ' hours')
+            AND step = 1
+            AND json_extract(data_json, '$.amount') IS NULL
+        """, (hours,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_rejected_expenses(hours: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT e.id, e.chat_id, e.message_id
+            FROM expenses e
+            JOIN expense_debtors ed ON e.id = ed.expense_id
+            WHERE ed.status = 'rejected'
+            AND e.created_at < datetime('now', '-' || ? || ' hours')
+        """, (hours,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_rejected_settlements(hours: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, chat_id, message_id
+            FROM settlements
+            WHERE status = 'rejected'
+            AND created_at < datetime('now', '-' || ? || ' hours')
+        """, (hours,))
+        return [dict(row) for row in cursor.fetchall()]
 def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
