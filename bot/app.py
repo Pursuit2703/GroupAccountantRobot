@@ -679,8 +679,30 @@ class Bot:
             self.handle_toggle_excluded_member(call, chat_id, user_id, payload)
         elif action == "export_data":
             self.handle_export_data(call, chat_id, user_id)
+        elif action == "toggle_auto_confirm":
+            self.handle_toggle_auto_confirm(call, chat_id, user_id)
         else:
             self.bot.answer_callback_query(call.id, text=f"❗ Unknown or expired action: {action}", show_alert=True)
+
+    def handle_toggle_auto_confirm(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        try:
+            settings = get_group_settings(chat_id)
+            auto_confirm_users = settings.get('auto_confirm_users', [])
+            
+            if user_id in auto_confirm_users:
+                auto_confirm_users.remove(user_id)
+            else:
+                auto_confirm_users.append(user_id)
+                
+            settings['auto_confirm_users'] = auto_confirm_users
+            update_group_settings(chat_id, settings)
+            
+            # Refresh the page
+            self.handle_settings(call, chat_id, user_id)
+            
+        except Exception as e:
+            logger.error(f"Error in handle_toggle_auto_confirm: {e}")
+            self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating your auto-confirm setting.", show_alert=True)
 
     def handle_analytics(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
@@ -781,10 +803,9 @@ class Bot:
             
             editor_name = get_user_display_name(user_id)
             
-            # TODO: Get actual settings
-            settings = {}
+            settings = get_group_settings(chat_id)
             
-            text, keyboard = render_settings_page(group_name, settings, editor_name, call.from_user.id, ADMIN_USER_IDS)
+            text, keyboard = render_settings_page(group_name, settings, editor_name, user_id, call.from_user.id, ADMIN_USER_IDS)
             
             self.bot.edit_message_text(
                 chat_id=chat_id,
@@ -1189,6 +1210,14 @@ class Bot:
                 expense_id = create_expense(chat_id, payer_id, amount_u5, description, category)
                 create_expense_debtors(expense_id, debtors, share_u5)
 
+                settings = get_group_settings(chat_id)
+                auto_confirm_users = settings.get('auto_confirm_users', [])
+                
+                for debtor_id in debtors:
+                    if debtor_id in auto_confirm_users:
+                        update_debtor_status(expense_id, debtor_id, 'confirmed')
+                        upsert_debt(debtor_id, payer_id, share_u5)
+
                 for file_info in files:
                     update_file_relation(file_info['file_row_id'], "expense", expense_id)
                 
@@ -1232,6 +1261,7 @@ class Bot:
                 return
 
             payer_id = expense['payer_id']
+            payer_name = get_user_display_name(payer_id)
             
             # Find the specific debtor to update
             expense_debtors = get_expense_debtors(expense_id)
@@ -1242,14 +1272,26 @@ class Bot:
                 return
 
             share_u5 = debtor_to_update['share_u5']
-            
+
+            # Check if expense is already disputed
+            is_disputed = any(d['status'] == 'rejected' for d in expense_debtors)
+            if is_disputed:
+                self.bot.answer_callback_query(call.id, text="❗ This expense has been disputed and cannot be confirmed.", show_alert=True)
+                return
+
             try:
                 update_debtor_status(expense_id, debtor_id_to_confirm, 'confirmed')
-                upsert_debt(debtor_id_to_confirm, payer_id, share_u5)
+                
+                # Check if all debtors have confirmed
+                expense_debtors = get_expense_debtors(expense_id) # refresh
+                all_confirmed = all(d['status'] == 'confirmed' for d in expense_debtors)
+
+                if all_confirmed:
+                    # Create debts for all debtors
+                    for debtor in expense_debtors:
+                        upsert_debt(debtor['debtor_id'], payer_id, debtor['share_u5'])
                 
                 # Update the expense message
-                expense_debtors = get_expense_debtors(expense_id)
-                payer_name = get_user_display_name(payer_id)
                 files = get_expense_files(expense_id)
                 text, keyboard = render_expense_message(expense, payer_name, expense_debtors, share_u5, files)
 
