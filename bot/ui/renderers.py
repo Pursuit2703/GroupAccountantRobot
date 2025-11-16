@@ -439,7 +439,8 @@ def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: 
     if current_step == 1:
         text += "Please select the person you paid."
     elif current_step == 2:
-        text += "⚠️ Please enter the exact amount you paid. Overpayments are allowed and will be tracked."
+        text += "Enter the exact amount you paid."
+        text += "\n⚠️ Overpayments are allowed and will be tracked."
         if 'payee' in draft_data:
             owed_amount = get_owed_amount(user_id, draft_data['payee'])
             if owed_amount > 0:
