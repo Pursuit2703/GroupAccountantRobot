@@ -298,10 +298,11 @@ class Bot:
             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
             update_draft(draft_id, draft_data, current_step, expires_at)
             
+            editor_name = get_user_display_name(user_id)
             if active_draft['type'] == 'expense':
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             else: # settlement
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             
             try:
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
@@ -359,10 +360,11 @@ class Bot:
             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
             update_draft(draft_id, draft_data, current_step, expires_at)
 
+            editor_name = get_user_display_name(user_id)
             if active_draft['type'] == 'expense':
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             else: # settlement
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             
             try:
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
@@ -460,10 +462,11 @@ class Bot:
                 # Check if the wizard message is still alive
                 try:
                     # We need the keyboard to check if the message is alive without changing it
+                    editor_name = get_user_display_name(user_id)
                     if active_draft['type'] == 'expense':
-                        _, keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=6, chat_id=chat_id, user_id=user_id)
+                        _, keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                     elif active_draft['type'] == 'settlement':
-                        _, keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=4, chat_id=chat_id, user_id=user_id)
+                        _, keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=active_draft['step'], total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                     elif active_draft['type'] == 'clear_debt':
                         _, keyboard = render_clear_debt_wizard(mode='prompt', draft_data=draft_data)
                     else:
@@ -508,7 +511,8 @@ class Bot:
                             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                             update_draft(draft_id, draft_data, current_step, expires_at)
                             self.bot.delete_message(message.chat.id, message.message_id)
-                            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=message.chat.id, user_id=user_id)
+                            editor_name = get_user_display_name(user_id)
+                            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=message.chat.id, user_id=user_id, editor_name=editor_name)
                             self.bot.edit_message_text(chat_id=message.chat.id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                         except ValueError:
                             self.bot.delete_message(message.chat.id, message.message_id)
@@ -519,7 +523,8 @@ class Bot:
                         expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                         update_draft(draft_id, draft_data, current_step, expires_at)
                         self.bot.delete_message(message.chat.id, message.message_id)
-                        wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=message.chat.id, user_id=user_id)
+                        editor_name = get_user_display_name(user_id)
+                        wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=message.chat.id, user_id=user_id, editor_name=editor_name)
                         self.bot.edit_message_text(chat_id=message.chat.id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 elif active_draft['type'] == 'settlement':
                     current_step = active_draft['step']
@@ -543,7 +548,8 @@ class Bot:
                             expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                             update_draft(draft_id, draft_data, current_step, expires_at)
                             self.bot.delete_message(message.chat.id, message.message_id)
-                            wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=message.chat.id, user_id=user_id)
+                            editor_name = get_user_display_name(user_id)
+                            wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=message.chat.id, user_id=user_id, editor_name=editor_name)
                             self.bot.edit_message_text(chat_id=message.chat.id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                         except ValueError:
                             self.bot.delete_message(message.chat.id, message.message_id)
@@ -1007,7 +1013,8 @@ class Bot:
 
             draft_data['wizard_message_id'] = call.message.message_id
             update_draft(draft_id, draft_data, current_step, expires_at)
-            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+            editor_name = get_user_display_name(user_id)
+            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             self.bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
             self.bot.answer_callback_query(call.id)
 
@@ -1054,7 +1061,8 @@ class Bot:
 
             draft_data['wizard_message_id'] = call.message.message_id
             update_draft(draft_id, draft_data, current_step, expires_at)
-            wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+            editor_name = get_user_display_name(user_id)
+            wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             self.bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
             self.bot.answer_callback_query(call.id)
 
@@ -1079,7 +1087,8 @@ class Bot:
                     current_step += 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1092,7 +1101,8 @@ class Bot:
                     current_step -= 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1151,7 +1161,8 @@ class Bot:
                 current_step += 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1180,7 +1191,8 @@ class Bot:
 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1200,7 +1212,8 @@ class Bot:
 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1220,7 +1233,8 @@ class Bot:
 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1232,7 +1246,8 @@ class Bot:
                 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, step, expires_at)
-                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1258,10 +1273,11 @@ class Bot:
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
 
+                editor_name = get_user_display_name(user_id)
                 if active_draft['type'] == 'expense':
-                    wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id)
+                    wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=current_step, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 else: # settlement
-                    wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                    wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id, text=f"File deleted.")
@@ -1554,7 +1570,8 @@ class Bot:
             self.bot.delete_message(chat_id, call.message.message_id)
 
             # Start the wizard
-            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=5, total_steps=6, chat_id=chat_id, user_id=user_id)
+            editor_name = get_user_display_name(user_id)
+            wizard_text, wizard_keyboard = render_add_expense_wizard(draft_data=draft_data, current_step=5, total_steps=6, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
             new_message = self.bot.send_message(chat_id, wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
             draft_data['wizard_message_id'] = new_message.message_id
             update_draft(draft_id, draft_data, 5, expires_at)
@@ -1797,7 +1814,8 @@ class Bot:
                     current_step += 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1810,7 +1828,8 @@ class Bot:
                     current_step -= 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1846,7 +1865,8 @@ class Bot:
 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1858,7 +1878,8 @@ class Bot:
                 
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, step, expires_at)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
@@ -1875,7 +1896,8 @@ class Bot:
                         current_step += 1
                         expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                         update_draft(draft_id, draft_data, current_step, expires_at)
-                        wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                        editor_name = get_user_display_name(user_id)
+                        wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                         self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                         self.bot.answer_callback_query(call.id)
                     else:
@@ -1893,7 +1915,8 @@ class Bot:
                 current_step += 1
                 expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                 update_draft(draft_id, draft_data, current_step, expires_at)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id)
+                editor_name = get_user_display_name(user_id)
+                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 

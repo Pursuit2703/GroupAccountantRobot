@@ -252,7 +252,7 @@ def render_clear_debt_wizard(mode: str, draft_data: dict) -> tuple[str, telebot.
 
 
 
-def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None, editor_name: str = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
 
     categories = {
 
@@ -277,6 +277,8 @@ def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: 
 
 
     title = "➕ New Expense"
+    if editor_name:
+        title += f" by {editor_name}"
     if current_step == 5:
         title += " (Review)"
     text = f"{title}\n\n"
@@ -401,8 +403,10 @@ def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: 
     return text, keyboard
 
 
-def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None, editor_name: str = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     title = "💸 Settle Debt"
+    if editor_name:
+        title += f" by {editor_name}"
     if current_step == 4:
         title += " (Review)"
     text = f"{title}\n\n"
