@@ -462,15 +462,6 @@ def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: 
                 draft_data['payee'] = owed_users[0]['user_id']
             payee_buttons = [telebot.types.InlineKeyboardButton(f"{'✅' if draft_data.get('payee') == user['user_id'] else ''} {user['display_name']}", callback_data=f"dm:toggle_payee:{user['user_id']}") for user in owed_users]
             keyboard.add(*payee_buttons, row_width=2)
-        else:
-            text += "\n\nℹ️ You don't owe anyone in this group. You can't settle a debt."
-            keyboard.add(telebot.types.InlineKeyboardButton("◀ Back to Main Menu", callback_data="dm:main_menu"))
-            # Disable next button if no one is owed
-            navigation_row = []
-            navigation_row.append(telebot.types.InlineKeyboardButton("❌ Cancel", callback_data="dm:settle_wizard_cancel"))
-            if navigation_row:
-                keyboard.row(*navigation_row)
-            return text, keyboard
     elif current_step == 3:
         if 'files' in draft_data and draft_data['files']:
             for i, file_info in enumerate(draft_data['files']):

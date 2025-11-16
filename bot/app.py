@@ -1013,6 +1013,12 @@ class Bot:
 
     def handle_pay_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         set_menu_message_id(chat_id, None)
+
+        owed_users = get_users_owed_by_user(user_id, chat_id)
+        if not owed_users:
+            self.bot.answer_callback_query(call.id, text="You don't owe anyone in this group.", show_alert=True)
+            return
+
         with get_connection() as conn:
             group = get_group(chat_id)
             if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
