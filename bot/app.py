@@ -553,6 +553,18 @@ class Bot:
             self.bot.answer_callback_query(call.id, f"This is an active wizard for {owner_name}.", show_alert=True)
             return
 
+        # Check if the message being interacted with is an active settings message for someone else.
+        SETTINGS_ACTIONS = [
+            "toggle_auto_confirm_expense", "toggle_auto_confirm_settlement",
+            "manage_excluded_members", "toggle_excluded_member"
+        ]
+        if action in SETTINGS_ACTIONS:
+            group = get_group(chat_id)
+            if group and group.get('settings_editor_id') and group.get('settings_editor_id') != user_id:
+                owner_name = get_user_display_name(group['settings_editor_id'])
+                self.bot.answer_callback_query(call.id, f"The settings are currently in use by {owner_name}.", show_alert=True)
+                return
+
         # For wizard-specific actions, ensure the user has an active draft.
         WIZARD_ACTIONS = [
             "wizard_next", "wizard_back", "wizard_cancel", "wizard_confirm", 
@@ -1639,6 +1651,7 @@ class Bot:
                 with get_connection() as conn:
                     conn.execute("DELETE FROM drafts WHERE user_id = ? AND chat_id = ?", (owner_id, chat_id))
 
+            set_settings_editor_id(chat_id, None)
             self.bot.delete_message(chat_id, call.message.message_id)
             self.bot.answer_callback_query(call.id, text="Menu closed.")
         except Exception as e:
