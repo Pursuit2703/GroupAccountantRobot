@@ -1,7 +1,7 @@
 WIZARD_CONFIGS = {
     'expense': {
         'title': "➕ New Expense",
-        'total_steps': 6,
+        'total_steps': 5,
         'review_step': 5,
         'steps': {
             1: {
@@ -27,11 +27,6 @@ WIZARD_CONFIGS = {
             5: {
                 'instruction': "Review the details below.",
                 'buttons': 'generate_expense_step_5_buttons',
-                'summary': None,
-            },
-            6: {
-                'instruction': "Ready to publish this expense to the group?",
-                'buttons': None,
                 'summary': None,
             },
         }
