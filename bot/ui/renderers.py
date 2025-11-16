@@ -514,9 +514,7 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
     logger.debug(f"Rendering expense message with files: {files}")
 
     amount_str = format_amount(expense['amount_u5'] / 100000)
-    share_float = share_u5 / 100000
-    truncated_share = int(share_float * 1000) / 1000
-    share_str = format_amount(truncated_share)
+    share_str = format_amount(share_u5 / 100000)
 
     description = expense.get('description')
     category = expense.get('category')
@@ -564,17 +562,13 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
             file_links.append(f'<a href="{file_link}">{file_type} {i+1}</a>')
         text += f"\n📎 Files: {', '.join(file_links)}\n"
 
-    share_float = share_u5 / 100000
-    truncated_share = int(share_float * 1000) / 1000
-    share_str = format_amount(truncated_share)
-
     # Calculate remainder based on formatted share
     if expense.get('category') == 'Debt':
         participants_count = len(debtors)
     else:
         participants_count = len(debtors) + 1
 
-    total_formatted_share = truncated_share * participants_count
+    total_formatted_share = (share_u5 / 100000) * participants_count
     
     expense_float = expense['amount_u5'] / 100000
     formatted_expense = float(f"{expense_float:.3f}")

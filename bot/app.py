@@ -1324,7 +1324,9 @@ class Bot:
                 self.bot.answer_callback_query(call.id, text="❗ Cannot calculate split with no participants.", show_alert=True)
                 return
 
-            share_u5 = amount_u5 // len(participants)
+            share_float = amount / len(participants)
+            truncated_share = int(share_float * 1000) / 1000
+            share_u5 = int(truncated_share * 100000)
 
             try:
                 expense_id = create_expense(chat_id, payer_id, amount_u5, description, category)
@@ -1892,7 +1894,9 @@ class Bot:
                 if 'payee' in draft_data:
                     owed_amount = get_owed_amount(user_id, draft_data['payee'])
                     if owed_amount > 0:
-                        draft_data['amount'] = owed_amount / 100000
+                        owed_amount_float = owed_amount / 100000
+                        truncated_owed_amount = int(owed_amount_float * 1000) / 1000
+                        draft_data['amount'] = truncated_owed_amount
                         current_step += 1
                         expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                         update_draft(draft_id, draft_data, current_step, expires_at)
