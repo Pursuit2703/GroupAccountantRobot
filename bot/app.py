@@ -53,6 +53,7 @@ from bot.db.repos import (
     get_old_rejected_expenses,
     get_old_rejected_settlements,
     set_active_wizard_user_id,
+    set_menu_message_id,
 )
 from bot.services.draft_service import expire_drafts
 from bot.services.file_service import store_file_ref
@@ -201,22 +202,44 @@ class Bot:
             user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
 
+            # Immediately delete the user's /menu command
+            self.bot.delete_message(chat_id, message.message_id)
+
             settings = get_group_settings(chat_id)
             excluded_members = settings.get('excluded_members', [])
             if user_id in excluded_members:
-                self.bot.delete_message(chat_id, message.message_id)
                 return
+
+            group = get_group(chat_id)
+            existing_menu_id = group.get('menu_message_id') if group else None
+
+            # If an existing menu message ID is found, delete it.
+            if existing_menu_id:
+                try:
+                    self.bot.delete_message(chat_id, existing_menu_id)
+                    logger.info(f"Deleted old menu message {existing_menu_id} in chat {chat_id}.")
+                except telebot.apihelper.ApiTelegramException as e:
+                    if "message to delete not found" in str(e).lower():
+                        logger.info(f"Old menu message {existing_menu_id} not found in chat {chat_id}. It might have been deleted manually.")
+                    else:
+                        logger.error(f"Error deleting old menu message {existing_menu_id}: {e}")
+                # Always clear the stored menu ID after attempting to delete.
+                set_menu_message_id(chat_id, None)
 
             chat_info = self.bot.get_chat(chat_id)
             group_name = chat_info.title if chat_info.title else "Your Group Name"
             menu_text, menu_keyboard = render_main_menu(group_name=group_name)
-            self.bot.send_message(
+            
+            # Send a new menu message.
+            sent_message = self.bot.send_message(
                 chat_id=chat_id,
                 text=menu_text,
-                reply_markup=menu_keyboard
+                reply_markup=menu_keyboard,
+                parse_mode='HTML'
             )
+            # Store the new menu's ID.
+            create_or_update_group_menu(chat_id, sent_message.message_id)
 
-            self.bot.delete_message(chat_id, message.message_id)
         except Exception as e:
             logger.error(f"Error in handle_menu_command: {e}")
 
@@ -777,6 +800,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating your auto-confirm setting.", show_alert=True)
 
     def handle_analytics(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -856,6 +880,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_settings(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         try:
             group = get_group(chat_id)
             if group and group.get('settings_editor_id') and group.get('settings_editor_id') != user_id:
@@ -945,6 +970,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating the excluded members list.", show_alert=True)
 
     def handle_add_expense_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         with get_connection() as conn:
             group = get_group(chat_id)
             if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
@@ -986,6 +1012,7 @@ class Bot:
             self.bot.answer_callback_query(call.id)
 
     def handle_pay_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         with get_connection() as conn:
             group = get_group(chat_id)
             if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
@@ -1107,7 +1134,6 @@ class Bot:
                     conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
                 set_active_wizard_user_id(chat_id, None)
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                set_menu_message_id(chat_id, None)
                 self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
     def handle_wizard_no_receipt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
@@ -1528,6 +1554,7 @@ class Bot:
             update_draft(draft_id, draft_data, 5, expires_at)
 
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         message_id = call.message.message_id
         if message_id in self.clear_debt_timers:
             self.clear_debt_timers.pop(message_id).cancel()
@@ -1554,6 +1581,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening balances.", show_alert=True)
 
     def handle_reports(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
+        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -1597,6 +1625,7 @@ class Bot:
         self.handle_balances(call, chat_id, user_id)
 
     def handle_clear_debt_start(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
+        set_menu_message_id(chat_id, None)
         try:
             group = get_group(chat_id)
             if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
@@ -1699,6 +1728,7 @@ class Bot:
                 reply_markup=menu_keyboard,
                 parse_mode='HTML'
             )
+            create_or_update_group_menu(chat_id, call.message.message_id)
             self.bot.answer_callback_query(call.id)
         except Exception as e:
             logger.error(f"Error in handle_main_menu: {e}")
@@ -1720,6 +1750,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while closing the menu.", show_alert=True)
             
     def handle_history(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, offset: int = 0):
+        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
