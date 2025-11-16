@@ -439,7 +439,7 @@ def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: 
     if current_step == 1:
         text += "Please select the person you paid."
     elif current_step == 2:
-        text += "Please enter the amount you paid."
+        text += "⚠️ Please enter the exact amount you paid. Overpayments are allowed and will be tracked."
         if 'payee' in draft_data:
             owed_amount = get_owed_amount(user_id, draft_data['payee'])
             if owed_amount > 0:
@@ -523,8 +523,12 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     # Determine if the expense is disputed
     is_disputed = any(d['status'] == 'rejected' for d in debtors)
+    all_confirmed = all(d['status'] == 'confirmed' for d in debtors)
 
-    text = f"🧾 <b>New Expense: {amount_str} from {payer_name}</b>\n"
+    title_prefix = "New Expense"
+    if all_confirmed:
+        title_prefix = "Expense"
+    text = f"🧾 <b>{title_prefix}: {amount_str} from {payer_name}</b>\n"
     if is_disputed:
         text += "<b>Disputed 🔴</b>\n\n"
     else:
