@@ -82,6 +82,7 @@ class Bot:
 
     def setup_handlers(self):
         self.bot.register_message_handler(self.handle_menu_command, commands=['menu'])
+        self.bot.register_message_handler(self.handle_start_command, commands=['start'])
         self.bot.register_message_handler(self.handle_file_message, content_types=['photo', 'document'])
         self.bot.register_message_handler(self.handle_text_message, func=lambda message: True, content_types=['text'])
         self.bot.register_callback_query_handler(self.handle_callback_query, func=lambda call: call.data.startswith("dm:"))
@@ -196,6 +197,8 @@ class Bot:
             logger.error(f"Error deleting message {message_id} in chat {chat_id}: {e}")
 
     def handle_menu_command(self, message: telebot.types.Message):
+        if message.chat.type == 'private':
+            return
         try:
             chat_id = message.chat.id
             
@@ -243,6 +246,12 @@ class Bot:
 
         except Exception as e:
             logger.error(f"Error in handle_menu_command: {e}")
+
+    def handle_start_command(self, message: telebot.types.Message):
+        if message.chat.type == 'private':
+            self.bot.send_message(message.chat.id, "I only work in groups.")
+            return
+        self.handle_menu_command(message)
 
     def handle_file_message(self, message: telebot.types.Message):
         if message.chat.type == 'private':
