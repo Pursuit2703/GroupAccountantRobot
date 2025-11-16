@@ -519,7 +519,13 @@ class Bot:
                             warning_msg = self.bot.send_message(message.chat.id, "❗ Invalid amount. Please enter a number.")
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                     elif current_step == 3:
-                        draft_data['description'] = message.text
+                        description_text = message.text
+                        if len(description_text) > 255:
+                            self.bot.delete_message(message.chat.id, message.message_id)
+                            warning_msg = self.bot.send_message(message.chat.id, "❗ Description is too long. Please keep it under 255 characters.")
+                            threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
+                            return
+                        draft_data['description'] = description_text
                         expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
                         update_draft(draft_id, draft_data, current_step, expires_at)
                         self.bot.delete_message(message.chat.id, message.message_id)
