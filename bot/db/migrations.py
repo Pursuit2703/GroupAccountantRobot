@@ -111,6 +111,7 @@ def run_migrations(conn: sqlite3.Connection):
           created_at TEXT DEFAULT (datetime('now', '+5 hours')),
           status TEXT NOT NULL DEFAULT 'pending', -- pending|confirmed|rejected
           confirmed_at TEXT,
+          status_at TIMESTAMP,
           confirmed_by INTEGER,
           reject_reason TEXT,
           message_id INTEGER,

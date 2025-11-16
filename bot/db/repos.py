@@ -479,7 +479,7 @@ def update_settlement_status(settlement_id: int, status: str) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE settlements SET status = ?, confirmed_at = CASE WHEN ? = 'confirmed' THEN datetime('now', 'utc') ELSE NULL END WHERE id = ?",
+            "UPDATE settlements SET status = ?, status_at = datetime('now', 'utc'), confirmed_at = CASE WHEN ? = 'confirmed' THEN datetime('now', 'utc') ELSE NULL END WHERE id = ?",
             (status, status, settlement_id),
         )
 
@@ -562,39 +562,33 @@ def get_spending_by_category(chat_id: int) -> list[dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_old_stale_drafts(hours: int) -> list[dict]:
+def get_old_stale_drafts() -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, chat_id, data_json
-            FROM drafts
-            WHERE created_at < datetime('now', '-' || ? || ' hours')
-            AND step = 1
-            AND json_extract(data_json, '$.amount') IS NULL
-        """, (hours,))
+        cursor.execute("SELECT * FROM drafts WHERE expires_at < datetime('now', 'utc')")
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_rejected_expenses(hours: int) -> list[dict]:
+def get_old_rejected_expenses(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT e.id, e.chat_id, e.message_id
+            SELECT DISTINCT e.id, e.chat_id, e.message_id
             FROM expenses e
             JOIN expense_debtors ed ON e.id = ed.expense_id
             WHERE ed.status = 'rejected'
-            AND e.created_at < datetime('now', '-' || ? || ' hours')
-        """, (hours,))
+            AND ed.status_at < datetime('now', 'utc', '-' || ? || ' seconds')
+        """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_rejected_settlements(hours: int) -> list[dict]:
+def get_old_rejected_settlements(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, chat_id, message_id
             FROM settlements
             WHERE status = 'rejected'
-            AND created_at < datetime('now', '-' || ? || ' hours')
-        """, (hours,))
+            AND status_at < datetime('now', '-' || ? || ' seconds')
+        """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
     with get_connection() as conn:

@@ -7,7 +7,7 @@ import threading
 import time
 from bot.db.connection import get_connection
 from bot.logger import get_logger
-from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH, ADMIN_USER_IDS
+from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH, ADMIN_USER_IDS, REJECTED_TTL_SECONDS
 from bot.services.menu_service import ensure_menu
 from bot.db.repos import (
     create_user_if_not_exists,
@@ -108,6 +108,7 @@ class Bot:
 
     def run(self):
         logger.info("Starting Debt Manager Bot...")
+        logger.info(f"REJECTED_TTL_SECONDS: {REJECTED_TTL_SECONDS}")
         if not BOT_TOKEN:
             logger.critical("BOT_TOKEN environment variable not set. Exiting.")
             return
@@ -126,10 +127,10 @@ class Bot:
     def cleanup_old_records(self):
         while True:
             try:
-                logger.debug("Running old records cleanup...")
+                # logger.debug("Running old records cleanup...")
 
                 # Clean up old stale drafts
-                stale_drafts = get_old_stale_drafts(1)
+                stale_drafts = get_old_stale_drafts()
                 for draft in stale_drafts:
                     try:
                         draft_data = json.loads(draft['data_json'])
@@ -142,7 +143,8 @@ class Bot:
                         logger.error(f"Error deleting stale draft {draft['id']}: {e}")
 
                 # Clean up old rejected expenses
-                rejected_expenses = get_old_rejected_expenses(1)
+                rejected_expenses = get_old_rejected_expenses(REJECTED_TTL_SECONDS)
+                logger.info(f"Found {len(rejected_expenses)} old rejected expenses to clean up.")
                 for expense in rejected_expenses:
                     try:
                         if expense['message_id']:
@@ -153,7 +155,7 @@ class Bot:
                         logger.error(f"Error deleting rejected expense {expense['id']}: {e}")
 
                 # Clean up old rejected settlements
-                rejected_settlements = get_old_rejected_settlements(1)
+                rejected_settlements = get_old_rejected_settlements(REJECTED_TTL_SECONDS)
                 for settlement in rejected_settlements:
                     try:
                         if settlement['message_id']:
@@ -166,12 +168,12 @@ class Bot:
             except Exception as e:
                 logger.error(f"Error in cleanup_old_records: {e}")
             
-            time.sleep(3600) # Sleep for 1 hour
+            time.sleep(60) # Sleep for 1 minute
 
     def cleanup_old_menus(self):
         while True:
             try:
-                old_menus = get_groups_with_old_menus(300)
+                old_menus = get_groups_with_old_menus(DRAFT_TTL_SECONDS)
                 if old_menus:
                     for group in old_menus:
                         chat_id = group['chat_id']
@@ -1323,6 +1325,7 @@ class Bot:
                 return
 
             try:
+                logger.info(f"User {debtor_id_to_reject} is rejecting expense {expense_id}. Updating status to 'rejected'.")
                 update_debtor_status(expense_id, debtor_id_to_reject, 'rejected')
                 
                 # Notify the payer with an @-mention in the group chat

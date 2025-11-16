@@ -8,4 +8,5 @@ ADMIN_USER_IDS = [int(admin_id) for admin_id in os.environ.get("ADMIN_USER_IDS",
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 SCALE = int(os.environ.get("SCALE", 100000))
 DRAFT_TTL_SECONDS = int(os.environ.get("DRAFT_TTL_SECONDS", 600))
+REJECTED_TTL_SECONDS = int(os.environ.get('REJECTED_TTL_SECONDS', 86400))
 CURRENCY = os.environ.get("CURRENCY", "UZS")
