@@ -170,7 +170,6 @@ class Bot:
     def cleanup_old_menus(self):
         while True:
             try:
-                logger.debug("Running old menu cleanup...")
                 old_menus = get_groups_with_old_menus(300)
                 if old_menus:
                     for group in old_menus:
