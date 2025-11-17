@@ -45,47 +45,56 @@ def handle_amount_input(bot, message, active_draft):
         bot.delete_message(message.chat.id, message.message_id)
 
 def start_wizard(bot, call, chat_id, user_id, wizard_type):
-    from bot.db.repos import get_group, set_active_wizard_user_id, get_active_draft, create_draft, update_draft, get_users_owed_by_user, get_user_display_name
+    from bot.db.repos import get_group, set_active_wizard_user_id, get_active_drafts_by_user, create_draft, update_draft, get_users_owed_by_user, get_user_display_name, delete_file_by_id
     from bot.db.connection import get_connection
     from bot.logger import get_logger
+    from bot.config import FILES_CHANNEL_ID
     logger = get_logger(__name__)
     
-    with get_connection() as conn:
-        group = get_group(chat_id)
-        if group and group['active_wizard_user_id'] and group['active_wizard_user_id'] != user_id:
-            lock_time = datetime.fromisoformat(group['active_wizard_locked_at'])
-            if datetime.now() - lock_time > timedelta(seconds=DRAFT_TTL_SECONDS):
-                logger.info(f"Overriding stale lock for user {group['active_wizard_user_id']} in chat {chat_id}")
-                set_active_wizard_user_id(chat_id, None)
-            else:
-                other_user = get_user_display_name(group['active_wizard_user_id'])
-                bot.answer_callback_query(call.id, f"❗ The menu is currently in use by {other_user}. Please wait.", show_alert=True)
-                return
+    try:
+        # Clean up any existing wizards for this user in this chat
+        existing_drafts = get_active_drafts_by_user(chat_id, user_id, DB_TIMEZONE_OFFSET)
+        if existing_drafts:
+            logger.info(f"Found {len(existing_drafts)} existing drafts for user {user_id} in chat {chat_id}. Cleaning up.")
+            for draft in existing_drafts:
+                try:
+                    draft_data = json.loads(draft['data_json'])
+                    if 'wizard_message_id' in draft_data:
+                        bot.delete_message(chat_id, draft_data['wizard_message_id'])
+                    
+                    # Delete associated files
+                    if 'files' in draft_data:
+                        for file_info in draft_data['files']:
+                            bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
+                            delete_file_by_id(file_info['file_row_id'])
+                    
+                    # Delete the draft record
+                    with get_connection() as conn:
+                        conn.execute("DELETE FROM drafts WHERE id = ?", (draft['id'],))
+                except Exception as e:
+                    logger.error(f"Error cleaning up old draft {draft['id']}: {e}")
 
+        # Lock the menu for the user
         set_active_wizard_user_id(chat_id, user_id)
-        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
-        draft_id, draft_data, current_step = None, {}, 1
+
+        # Create a new draft
         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
-
-        if active_draft and active_draft['type'] == wizard_type:
-            draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
-        else:
-            if active_draft:
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-            draft_id = create_draft(chat_id, user_id, wizard_type, expires_at)
-
-        draft_data['wizard_message_id'] = call.message.message_id
+        draft_id = create_draft(chat_id, user_id, wizard_type, expires_at)
         
-        if wizard_type == 'settlement' and current_step == 1 and 'payee' not in draft_data:
+        draft_data = {'wizard_message_id': call.message.message_id}
+        current_step = 1
+        
+        # Special handling for settlement wizard if user owes only one person
+        if wizard_type == 'settlement':
             owed_users = get_users_owed_by_user(user_id, chat_id)
             if len(owed_users) == 1:
                 draft_data['payee'] = owed_users[0]['user_id']
                 current_step = 2
 
         update_draft(draft_id, draft_data, current_step, expires_at)
+        
+        # Render and send the new wizard message
         editor_name = get_user_display_name(user_id)
-
         wizard_text, wizard_keyboard = render_wizard(
             wizard_type=wizard_type,
             draft_data=draft_data,
@@ -95,8 +104,17 @@ def start_wizard(bot, call, chat_id, user_id, wizard_type):
             editor_name=editor_name
         )
 
-        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            text=wizard_text,
+            reply_markup=wizard_keyboard,
+            parse_mode='HTML'
+        )
         bot.answer_callback_query(call.id)
+    except Exception as e:
+        logger.error(f"Error in start_wizard: {e}", exc_info=True)
+        bot.answer_callback_query(call.id, "An error occurred while starting the wizard.", show_alert=True)
 
 def update_wizard_after_file_processing(bot, chat_id, user_id, draft_data, current_step, wizard_type):
     editor_name = get_user_display_name(user_id)

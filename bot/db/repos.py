@@ -98,23 +98,60 @@ def get_draft_owner_by_message_id(chat_id: int, message_id: int) -> int | None:
         return row['user_id'] if row else None
 
 
-def get_active_draft(chat_id: int, user_id: int, timezone_offset: str) -> dict | None:
+def get_active_draft(chat_id: int, user_id: int, timezone_offset: str):
     with get_connection() as conn:
         cursor = conn.cursor()
-        query = f"SELECT * FROM drafts WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', '{timezone_offset}') AND locked = 0 ORDER BY created_at DESC LIMIT 1"
-        params = (chat_id, user_id)
-        logger.debug(f"Executing query: {query} with params: {params}")
-       # Log current datetime('now') from SQLite perspective
-        cursor.execute(f"SELECT datetime('now', '{timezone_offset}')")
-        sqlite_now = cursor.fetchone()[0]
-        logger.debug(f"SQLite datetime('now', '{timezone_offset}'): {sqlite_now}")
-        cursor.execute(query, params)
+        cursor.execute(
+            """
+            SELECT id, type, step, data_json, expires_at, user_id
+            FROM drafts
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (chat_id, user_id, timezone_offset),
+        )
         row = cursor.fetchone()
         if row:
-            logger.debug(f"Found active draft: ID={row['id']}, expires_at={row['expires_at']}")
-            logger.debug(f"Draft data from DB: {row['data_json']}")
-        logger.debug(f"Result of get_active_draft: {row}")
-        return dict(row) if row else None
+            return {
+                "id": row[0],
+                "type": row[1],
+                "step": row[2],
+                "data_json": row[3],
+                "expires_at": row[4],
+                "user_id": row[5],
+            }
+        return None
+
+
+def get_active_drafts_by_user(chat_id: int, user_id: int, timezone_offset: str):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, type, step, data_json, expires_at
+            FROM drafts
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            ORDER BY created_at DESC
+            """,
+            (chat_id, user_id, timezone_offset),
+        )
+        rows = cursor.fetchall()
+        drafts = []
+        for row in rows:
+            drafts.append(
+                {
+                    "id": row[0],
+                    "type": row[1],
+                    "step": row[2],
+                    "data_json": row[3],
+                    "expires_at": row[4],
+                }
+            )
+        return drafts
+
+
+
 
 def update_draft(draft_id: int, data_json: dict, step: int, expires_at: str) -> None:
     logger.debug(f"Updating draft {draft_id} with data: {data_json}")

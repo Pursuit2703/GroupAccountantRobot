@@ -142,66 +142,86 @@ class Bot:
                     try:
                         draft_data = json.loads(draft['data_json'])
                         if 'wizard_message_id' in draft_data:
-                            self.bot.delete_message(draft['chat_id'], draft_data['wizard_message_id'])
+                            try:
+                                self.bot.delete_message(draft['chat_id'], draft_data['wizard_message_id'])
+                            except Exception as e:
+                                if "message to delete not found" in str(e).lower():
+                                    logger.warning(f"Wizard message for stale draft {draft['id']} was already deleted.")
+                                else:
+                                    raise
                         
-                        if 'files' in draft_data:
-                            for file_info in draft_data['files']:
-                                try:
-                                    self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
-                                except Exception as e:
-                                    logger.error(f"Error deleting file from channel: {e}")
-                                delete_file_by_id(file_info['file_row_id'])
-
-                        with get_connection() as conn:
-                            conn.execute("DELETE FROM drafts WHERE id = ?", (draft['id'],))
+                        self._delete_draft_and_files(draft['id'], draft_data)
                         logger.info(f"Deleted stale draft {draft['id']} in chat {draft['chat_id']}")
                     except Exception as e:
-                        logger.error(f"Error deleting stale draft {draft['id']}: {e}")
+                        logger.error(f"Error processing stale draft {draft['id']} for deletion: {e}")
 
                 # Clean up old rejected expenses
                 rejected_expenses = get_old_rejected_expenses(REJECTED_TTL_SECONDS, DB_TIMEZONE_OFFSET)
-                # logger.info(f"Found {len(rejected_expenses)} old rejected expenses to clean up.")
                 for expense in rejected_expenses:
                     try:
                         if expense['message_id']:
-                            self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                            try:
+                                self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                            except Exception as e:
+                                if "message to delete not found" in str(e).lower():
+                                    logger.warning(f"Message for rejected expense {expense['id']} was already deleted.")
+                                else:
+                                    raise
                         delete_expense(expense['id'])
                         logger.info(f"Deleted rejected expense {expense['id']} in chat {expense['chat_id']}")
                     except Exception as e:
-                        logger.error(f"Error deleting rejected expense {expense['id']}: {e}")
+                        logger.error(f"Error processing rejected expense {expense['id']} for deletion: {e}")
 
                 # Clean up old rejected settlements
                 rejected_settlements = get_old_rejected_settlements(REJECTED_TTL_SECONDS, DB_TIMEZONE_OFFSET)
                 for settlement in rejected_settlements:
                     try:
                         if settlement['message_id']:
-                            self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                            try:
+                                self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                            except Exception as e:
+                                if "message to delete not found" in str(e).lower():
+                                    logger.warning(f"Message for rejected settlement {settlement['id']} was already deleted.")
+                                else:
+                                    raise
                         delete_settlement(settlement['id'])
                         logger.info(f"Deleted rejected settlement {settlement['id']} in chat {settlement['chat_id']}")
                     except Exception as e:
-                        logger.error(f"Error deleting rejected settlement {settlement['id']}: {e}")
+                        logger.error(f"Error processing rejected settlement {settlement['id']} for deletion: {e}")
 
                 # Clean up old pending expenses
                 pending_expenses = get_old_pending_expenses(PENDING_TTL_SECONDS, DB_TIMEZONE_OFFSET)
                 for expense in pending_expenses:
                     try:
                         if expense['message_id']:
-                            self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                            try:
+                                self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                            except Exception as e:
+                                if "message to delete not found" in str(e).lower():
+                                    logger.warning(f"Message for pending expense {expense['id']} was already deleted.")
+                                else:
+                                    raise
                         delete_expense(expense['id'])
                         logger.info(f"Deleted pending expense {expense['id']} in chat {expense['chat_id']}")
                     except Exception as e:
-                        logger.error(f"Error deleting pending expense {expense['id']}: {e}")
+                        logger.error(f"Error processing pending expense {expense['id']} for deletion: {e}")
 
                 # Clean up old pending settlements
                 pending_settlements = get_old_pending_settlements(PENDING_TTL_SECONDS, DB_TIMEZONE_OFFSET)
                 for settlement in pending_settlements:
                     try:
                         if settlement['message_id']:
-                            self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                            try:
+                                self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                            except Exception as e:
+                                if "message to delete not found" in str(e).lower():
+                                    logger.warning(f"Message for pending settlement {settlement['id']} was already deleted.")
+                                else:
+                                    raise
                         delete_settlement(settlement['id'])
                         logger.info(f"Deleted pending settlement {settlement['id']} in chat {settlement['chat_id']}")
                     except Exception as e:
-                        logger.error(f"Error deleting pending settlement {settlement['id']}: {e}")
+                        logger.error(f"Error processing pending settlement {settlement['id']} for deletion: {e}")
 
             except Exception as e:
                 logger.error(f"Error in cleanup_old_records: {e}")
