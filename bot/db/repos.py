@@ -47,14 +47,14 @@ def update_group_last_activity(chat_id: int) -> None:
         cursor = conn.cursor()
         cursor.execute("UPDATE groups SET last_activity_at = datetime('now') WHERE chat_id = ?", (chat_id,))
 
-def get_groups_with_old_menus(timeout_seconds: int, timezone_offset: str) -> list[dict]:
+def get_groups_with_old_menus(timeout_seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT * FROM groups 
             WHERE menu_message_id IS NOT NULL 
-            AND last_activity_at < datetime('now', '{timezone_offset}', '-{timeout_seconds} seconds')
-        """)
+            AND last_activity_at < datetime('now', '-' || ? || ' seconds')
+        """, (timeout_seconds,))
         return [dict(row) for row in cursor.fetchall()]
 
 def set_menu_message_id(chat_id: int, menu_message_id: int | None) -> None:
@@ -98,18 +98,18 @@ def get_draft_owner_by_message_id(chat_id: int, message_id: int) -> int | None:
         return row['user_id'] if row else None
 
 
-def get_active_draft(chat_id: int, user_id: int, timezone_offset: str):
+def get_active_draft(chat_id: int, user_id: int):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT id, type, step, data_json, expires_at, user_id
             FROM drafts
-            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now')
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (chat_id, user_id, timezone_offset),
+            (chat_id, user_id),
         )
         row = cursor.fetchone()
         if row:
@@ -124,17 +124,17 @@ def get_active_draft(chat_id: int, user_id: int, timezone_offset: str):
         return None
 
 
-def get_active_drafts_by_user(chat_id: int, user_id: int, timezone_offset: str):
+def get_active_drafts_by_user(chat_id: int, user_id: int):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT id, type, step, data_json, expires_at
             FROM drafts
-            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now')
             ORDER BY created_at DESC
             """,
-            (chat_id, user_id, timezone_offset),
+            (chat_id, user_id),
         )
         rows = cursor.fetchall()
         drafts = []
@@ -599,13 +599,13 @@ def get_spending_by_category(chat_id: int) -> list[dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_old_stale_drafts(timezone_offset: str) -> list[dict]:
+def get_old_stale_drafts() -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM drafts WHERE expires_at < datetime('now', '{timezone_offset}')")
+        cursor.execute(f"SELECT * FROM drafts WHERE expires_at < datetime('now')")
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_rejected_expenses(seconds: int, timezone_offset: str) -> list[dict]:
+def get_old_rejected_expenses(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -613,22 +613,22 @@ def get_old_rejected_expenses(seconds: int, timezone_offset: str) -> list[dict]:
             FROM expenses e
             JOIN expense_debtors ed ON e.id = ed.expense_id
             WHERE ed.status = 'rejected'
-            AND ed.status_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+            AND ed.status_at < datetime('now', '-' || ? || ' seconds')
         """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_rejected_settlements(seconds: int, timezone_offset: str) -> list[dict]:
+def get_old_rejected_settlements(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT id, chat_id, message_id
             FROM settlements
             WHERE status = 'rejected'
-            AND status_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+            AND status_at < datetime('now', '-' || ? || ' seconds')
         """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_pending_expenses(seconds: int, timezone_offset: str) -> list[dict]:
+def get_old_pending_expenses(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -636,18 +636,18 @@ def get_old_pending_expenses(seconds: int, timezone_offset: str) -> list[dict]:
             FROM expenses e
             JOIN expense_debtors ed ON e.id = ed.expense_id
             WHERE ed.status = 'pending'
-            AND e.created_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+            AND e.created_at < datetime('now', '-' || ? || ' seconds')
         """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 
-def get_old_pending_settlements(seconds: int, timezone_offset: str) -> list[dict]:
+def get_old_pending_settlements(seconds: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT id, chat_id, message_id
             FROM settlements
             WHERE status = 'pending'
-            AND created_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+            AND created_at < datetime('now', '-' || ? || ' seconds')
         """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
 def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:

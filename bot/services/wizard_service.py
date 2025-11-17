@@ -53,7 +53,7 @@ def start_wizard(bot, call, chat_id, user_id, wizard_type):
     
     try:
         # Clean up any existing wizards for this user in this chat
-        existing_drafts = get_active_drafts_by_user(chat_id, user_id, DB_TIMEZONE_OFFSET)
+        existing_drafts = get_active_drafts_by_user(chat_id, user_id)
         if existing_drafts:
             logger.info(f"Found {len(existing_drafts)} existing drafts for user {user_id} in chat {chat_id}. Cleaning up.")
             for draft in existing_drafts:
@@ -138,7 +138,7 @@ def handle_wizard_next(bot, call, chat_id, user_id, wizard_type):
     from bot.db.repos import get_active_draft, update_draft
     
     with get_connection() as conn:
-        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
+        active_draft = get_active_draft(chat_id, user_id)
         if active_draft and active_draft['type'] == wizard_type:
             draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
 
@@ -176,7 +176,7 @@ def handle_wizard_back(bot, call, chat_id, user_id, wizard_type):
     from bot.db.repos import get_active_draft, update_draft
 
     with get_connection() as conn:
-        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
+        active_draft = get_active_draft(chat_id, user_id)
         if active_draft and active_draft['type'] == wizard_type:
             draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
             if current_step > 1:
