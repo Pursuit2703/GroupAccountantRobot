@@ -1,10 +1,11 @@
 import sqlite3
+from bot.config import DB_TIMEZONE_OFFSET
 
 def run_migrations(conn: sqlite3.Connection):
     cursor = conn.cursor()
 
     # Migration 001: Initial schema
-    cursor.executescript("""
+    cursor.executescript(f"""
         PRAGMA foreign_keys = ON;
 
         CREATE TABLE IF NOT EXISTS groups (
@@ -25,14 +26,14 @@ def run_migrations(conn: sqlite3.Connection):
           tg_id INTEGER UNIQUE NOT NULL,
           username TEXT,
           display_name TEXT,
-          registered_at TEXT DEFAULT (datetime('now', '+5 hours'))
+          registered_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}'))
         );
 
         CREATE TABLE IF NOT EXISTS group_users (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           chat_id INTEGER NOT NULL,
           user_id INTEGER NOT NULL,
-          joined_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          joined_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           FOREIGN KEY(chat_id) REFERENCES groups(chat_id) ON DELETE CASCADE,
           FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
           UNIQUE(chat_id, user_id)
@@ -47,9 +48,9 @@ def run_migrations(conn: sqlite3.Connection):
           user_id INTEGER NOT NULL,
           type TEXT NOT NULL, -- 'expense' or 'settlement'
           step INTEGER NOT NULL DEFAULT 1,
-          data_json TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT DEFAULT (datetime('now', '+5 hours')),
-          updated_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          data_json TEXT NOT NULL DEFAULT '{{}}',
+          created_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
+          updated_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           expires_at TEXT,
           locked INTEGER DEFAULT 0
         );
@@ -64,7 +65,7 @@ def run_migrations(conn: sqlite3.Connection):
           amount_u5 INTEGER NOT NULL, -- amount * 1e5 for storing decimals
           description TEXT,
           category TEXT,
-          created_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          created_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           locked INTEGER DEFAULT 0,
           rejected INTEGER DEFAULT 0,
           rejected_at TEXT,
@@ -92,7 +93,7 @@ def run_migrations(conn: sqlite3.Connection):
           from_user_id INTEGER NOT NULL,
           to_user_id INTEGER NOT NULL,
           amount_u5 INTEGER NOT NULL DEFAULT 0, -- Scaled by 100,000 to avoid floating point errors
-          updated_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          updated_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           UNIQUE(from_user_id, to_user_id),
           FOREIGN KEY(from_user_id) REFERENCES users(id),
           FOREIGN KEY(to_user_id) REFERENCES users(id)
@@ -108,7 +109,7 @@ def run_migrations(conn: sqlite3.Connection):
           from_user_id INTEGER NOT NULL, -- initiator (says they paid)
           to_user_id INTEGER NOT NULL,   -- counterparty (the one who should confirm)
           amount_u5 INTEGER NOT NULL,
-          created_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          created_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           status TEXT NOT NULL DEFAULT 'pending', -- pending|confirmed|rejected
           confirmed_at TEXT,
           status_at TIMESTAMP,
@@ -126,7 +127,7 @@ def run_migrations(conn: sqlite3.Connection):
           file_id TEXT NOT NULL, -- Telegram file_id
           origin_channel_message_id INTEGER,
           uploader_user_id INTEGER,
-          uploaded_at TEXT DEFAULT (datetime('now', '+5 hours')),
+          uploaded_at TEXT DEFAULT (datetime('now', '{DB_TIMEZONE_OFFSET}')),
           type TEXT,
           related_type TEXT, -- expense|settlement|draft
           related_id TEXT,

@@ -7,7 +7,7 @@ import threading
 import time
 from bot.db.connection import get_connection
 from bot.logger import get_logger
-from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH, ADMIN_USER_IDS, REJECTED_TTL_SECONDS
+from bot.config import BOT_TOKEN, DRAFT_TTL_SECONDS, FILES_CHANNEL_ID, DB_PATH, ADMIN_USER_IDS, REJECTED_TTL_SECONDS, PENDING_TTL_SECONDS, DB_TIMEZONE_OFFSET
 from bot.services.menu_service import ensure_menu
 from bot.db.repos import (
     create_user_if_not_exists,
@@ -55,10 +55,13 @@ from bot.db.repos import (
     get_old_rejected_settlements,
     set_active_wizard_user_id,
     set_menu_message_id,
+    get_old_pending_expenses,
+    get_old_pending_settlements,
 )
 from bot.services.draft_service import expire_drafts
 from bot.services.file_service import store_file_ref
 from bot.utils.currency import format_amount
+from bot.utils.time import get_now_in_configured_timezone
 from bot.services.reporter import generate_csv_report
 from bot.services.accounting import get_all_balances, get_my_balance
 from bot.services.wizard_service import handle_amount_input, start_wizard, update_wizard_after_file_processing, handle_wizard_next, handle_wizard_back
@@ -74,6 +77,7 @@ class Bot:
         self.user_locks = set()
         self.clear_debt_timers = {}
         self.file_processing_lock = threading.Lock()
+        self.menu_creation_time = {}
         self.setup_handlers()
 
     def setup_database(self):
@@ -121,6 +125,9 @@ class Bot:
         old_records_cleanup_thread = threading.Thread(target=self.cleanup_old_records, daemon=True)
         old_records_cleanup_thread.start()
 
+        menu_creation_time_cleanup_thread = threading.Thread(target=self.cleanup_menu_creation_time, daemon=True)
+        menu_creation_time_cleanup_thread.start()
+
         logger.info("Starting bot polling...")
         self.bot.polling(none_stop=True)
 
@@ -130,12 +137,21 @@ class Bot:
                 # logger.debug("Running old records cleanup...")
 
                 # Clean up old stale drafts
-                stale_drafts = get_old_stale_drafts()
+                stale_drafts = get_old_stale_drafts(DB_TIMEZONE_OFFSET)
                 for draft in stale_drafts:
                     try:
                         draft_data = json.loads(draft['data_json'])
                         if 'wizard_message_id' in draft_data:
                             self.bot.delete_message(draft['chat_id'], draft_data['wizard_message_id'])
+                        
+                        if 'files' in draft_data:
+                            for file_info in draft_data['files']:
+                                try:
+                                    self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
+                                except Exception as e:
+                                    logger.error(f"Error deleting file from channel: {e}")
+                                delete_file_by_id(file_info['file_row_id'])
+
                         with get_connection() as conn:
                             conn.execute("DELETE FROM drafts WHERE id = ?", (draft['id'],))
                         logger.info(f"Deleted stale draft {draft['id']} in chat {draft['chat_id']}")
@@ -143,8 +159,8 @@ class Bot:
                         logger.error(f"Error deleting stale draft {draft['id']}: {e}")
 
                 # Clean up old rejected expenses
-                rejected_expenses = get_old_rejected_expenses(REJECTED_TTL_SECONDS)
-                logger.info(f"Found {len(rejected_expenses)} old rejected expenses to clean up.")
+                rejected_expenses = get_old_rejected_expenses(REJECTED_TTL_SECONDS, DB_TIMEZONE_OFFSET)
+                # logger.info(f"Found {len(rejected_expenses)} old rejected expenses to clean up.")
                 for expense in rejected_expenses:
                     try:
                         if expense['message_id']:
@@ -155,7 +171,7 @@ class Bot:
                         logger.error(f"Error deleting rejected expense {expense['id']}: {e}")
 
                 # Clean up old rejected settlements
-                rejected_settlements = get_old_rejected_settlements(REJECTED_TTL_SECONDS)
+                rejected_settlements = get_old_rejected_settlements(REJECTED_TTL_SECONDS, DB_TIMEZONE_OFFSET)
                 for settlement in rejected_settlements:
                     try:
                         if settlement['message_id']:
@@ -165,6 +181,28 @@ class Bot:
                     except Exception as e:
                         logger.error(f"Error deleting rejected settlement {settlement['id']}: {e}")
 
+                # Clean up old pending expenses
+                pending_expenses = get_old_pending_expenses(PENDING_TTL_SECONDS, DB_TIMEZONE_OFFSET)
+                for expense in pending_expenses:
+                    try:
+                        if expense['message_id']:
+                            self.bot.delete_message(expense['chat_id'], expense['message_id'])
+                        delete_expense(expense['id'])
+                        logger.info(f"Deleted pending expense {expense['id']} in chat {expense['chat_id']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting pending expense {expense['id']}: {e}")
+
+                # Clean up old pending settlements
+                pending_settlements = get_old_pending_settlements(PENDING_TTL_SECONDS, DB_TIMEZONE_OFFSET)
+                for settlement in pending_settlements:
+                    try:
+                        if settlement['message_id']:
+                            self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
+                        delete_settlement(settlement['id'])
+                        logger.info(f"Deleted pending settlement {settlement['id']} in chat {settlement['chat_id']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting pending settlement {settlement['id']}: {e}")
+
             except Exception as e:
                 logger.error(f"Error in cleanup_old_records: {e}")
             
@@ -173,7 +211,7 @@ class Bot:
     def cleanup_old_menus(self):
         while True:
             try:
-                old_menus = get_groups_with_old_menus(DRAFT_TTL_SECONDS)
+                old_menus = get_groups_with_old_menus(DRAFT_TTL_SECONDS, DB_TIMEZONE_OFFSET)
                 if old_menus:
                     for group in old_menus:
                         chat_id = group['chat_id']
@@ -192,18 +230,52 @@ class Bot:
             
             time.sleep(60)
 
+    def cleanup_menu_creation_time(self):
+        while True:
+            try:
+                now = datetime.now()
+                # Create a copy of the dictionary to avoid issues with modifying it while iterating
+                for chat_id, creation_time in list(self.menu_creation_time.items()):
+                    if (now - creation_time) > timedelta(hours=1):
+                        del self.menu_creation_time[chat_id]
+            except Exception as e:
+                logger.error(f"Error in cleanup_menu_creation_time: {e}")
+            
+            time.sleep(3600) # Sleep for 1 hour
+
     def delete_message(self, chat_id, message_id):
         try:
             self.bot.delete_message(chat_id, message_id)
         except Exception as e:
             logger.error(f"Error deleting message {message_id} in chat {chat_id}: {e}")
 
+    def _delete_draft_and_files(self, draft_id: int, draft_data: dict):
+        if 'files' in draft_data:
+            for file_info in draft_data['files']:
+                try:
+                    self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
+                except Exception as e:
+                    logger.error(f"Error deleting file from channel: {e}")
+                delete_file_by_id(file_info['file_row_id'])
+        with get_connection() as conn:
+            conn.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
+
     def handle_menu_command(self, message: telebot.types.Message):
         if message.chat.type == 'private':
             return
+        
+        chat_id = message.chat.id
+        now = datetime.now()
+        last_creation_time = self.menu_creation_time.get(chat_id)
+
+        if last_creation_time and (now - last_creation_time) < timedelta(seconds=5):
+            logger.info(f"Menu command for chat {chat_id} was issued too quickly. Ignoring.")
+            self.bot.delete_message(chat_id, message.message_id)
+            return
+        
+        self.menu_creation_time[chat_id] = now
+
         try:
-            chat_id = message.chat.id
-            
             create_group_if_not_exists(chat_id)
             user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.first_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
@@ -284,7 +356,7 @@ class Bot:
             user_id = create_user_if_not_exists(first_message.from_user.id, first_message.from_user.username, first_message.from_user.full_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
 
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
                 return
@@ -307,7 +379,7 @@ class Bot:
                 # No files were successfully processed
                 return
 
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             update_draft(draft_id, draft_data, current_step, expires_at)
             
             if update_wizard_after_file_processing(self.bot, chat_id, user_id, draft_data, current_step, active_draft['type']):
@@ -321,7 +393,7 @@ class Bot:
             user_id = create_user_if_not_exists(message.from_user.id, message.from_user.username, message.from_user.full_name)
             add_user_to_group_if_not_exists(user_id, chat_id)
 
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
 
             if not active_draft or active_draft['type'] not in ['expense', 'settlement']:
                 return
@@ -339,7 +411,7 @@ class Bot:
                 # process_file failed (e.g. wrong mime type) and handled its own messaging/deletion.
                 return
 
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             update_draft(draft_id, draft_data, current_step, expires_at)
 
             if update_wizard_after_file_processing(self.bot, chat_id, user_id, draft_data, current_step, active_draft['type']):
@@ -396,7 +468,7 @@ class Bot:
                         self.bot.delete_message(chat_id, message.message_id)
                     return
 
-                active_draft = get_active_draft(chat_id, user_id)
+                active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
 
                 if not active_draft:
                     return
@@ -429,8 +501,7 @@ class Bot:
                     if hasattr(e, 'error_code') and e.error_code == 400:
                         if "message to edit not found" in e.description:
                             logger.debug(f"Wizard message {wizard_message_id} not found. Ignoring text message.")
-                            with get_connection() as conn:
-                                conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+                            self._delete_draft_and_files(active_draft['id'], draft_data)
                             return
                         elif "message is not modified" in e.description:
                             # This is okay, it means the message is alive.
@@ -454,7 +525,7 @@ class Bot:
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                             return
                         draft_data['description'] = description_text
-                        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(draft_id, draft_data, current_step, expires_at)
                         self.bot.delete_message(message.chat.id, message.message_id)
                         editor_name = get_user_display_name(user_id)
@@ -489,7 +560,7 @@ class Bot:
                             return
                         
                         draft_data['amount_to_clear'] = amount
-                        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(active_draft['id'], draft_data, 2, expires_at)
                         self.bot.delete_message(message.chat.id, message.message_id)
                         
@@ -577,7 +648,7 @@ class Bot:
             "clear_full_debt", "clear_debt_cancel", "confirm_clear_debt"
         ]
         if action in WIZARD_ACTIONS:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if not active_draft:
                 self.bot.answer_callback_query(call.id, "❗ This wizard has expired or been cancelled.", show_alert=True)
                 try:
@@ -597,11 +668,11 @@ class Bot:
         elif action == "pay_debt":
             self.handle_pay_debt_start(call, chat_id, user_id)
         elif action == "wizard_next":
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 handle_wizard_next(self.bot, call, chat_id, user_id, active_draft['type'])
         elif action == "wizard_back":
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 handle_wizard_back(self.bot, call, chat_id, user_id, active_draft['type'])
         elif action in ["wizard_cancel", "delete_expense"]:
@@ -656,11 +727,11 @@ class Bot:
             offset = int(payload) if payload else 0
             self.handle_history(call, chat_id, user_id, offset)
         elif action == "settle_wizard_next":
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 handle_wizard_next(self.bot, call, chat_id, user_id, active_draft['type'])
         elif action == "settle_wizard_back":
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 handle_wizard_back(self.bot, call, chat_id, user_id, active_draft['type'])
         elif action == "settle_wizard_cancel":
@@ -750,7 +821,6 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while updating your auto-confirm setting.", show_alert=True)
 
     def handle_analytics(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -830,7 +900,6 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching analytics.", show_alert=True)
 
     def handle_settings(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        set_menu_message_id(chat_id, None)
         try:
             group = get_group(chat_id)
             if group and group.get('settings_editor_id') and group.get('settings_editor_id') != user_id:
@@ -963,30 +1032,22 @@ class Bot:
                 self.bot.delete_message(chat_id, call.message.message_id)
                 self.bot.answer_callback_query(call.id, text="✅ Expense deleted!")
         else:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 draft_data = json.loads(active_draft['data_json'])
-                if 'files' in draft_data:
-                    for file_info in draft_data['files']:
-                        try:
-                            self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
-                        except Exception as e:
-                            logger.error(f"Error deleting file from channel: {e}")
-                        delete_file_by_id(file_info['file_row_id'])
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+                self._delete_draft_and_files(active_draft['id'], draft_data)
                 set_active_wizard_user_id(chat_id, None)
                 self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
                 self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
     def handle_wizard_no_receipt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'expense' and active_draft['step'] == 2:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 draft_data['no_receipt'] = True
                 current_step += 1
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1002,7 +1063,7 @@ class Bot:
 
     def handle_set_category(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, category: str):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'expense' and active_draft['step'] == 3:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
@@ -1023,7 +1084,7 @@ class Bot:
                 else:
                     draft_data['categories'].append(category)
 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1039,7 +1100,7 @@ class Bot:
 
     def handle_toggle_debtor(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, debtor_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'expense' and active_draft['step'] == 4:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
@@ -1051,7 +1112,7 @@ class Bot:
                 else:
                     draft_data['debtors'].append(debtor_id)
 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1067,7 +1128,7 @@ class Bot:
 
     def handle_toggle_all_debtors(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'expense' and active_draft['step'] == 4:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
@@ -1079,7 +1140,7 @@ class Bot:
                 else:
                     draft_data['debtors'] = member_ids
 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1095,11 +1156,11 @@ class Bot:
 
     def handle_edit_step(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, step: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'expense':
                 draft_id, draft_data = active_draft['id'], json.loads(active_draft['data_json'])
                 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1115,7 +1176,7 @@ class Bot:
 
     def handle_delete_file(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, file_row_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] in ['expense', 'settlement']:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
@@ -1132,7 +1193,7 @@ class Bot:
                     except Exception as e:
                         logger.error(f"Error deleting file from channel: {e}")
 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
 
                 editor_name = get_user_display_name(user_id)
@@ -1150,7 +1211,7 @@ class Bot:
 
     def handle_wizard_confirm(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if not active_draft:
                 self.bot.answer_callback_query(call.id, text="❗ Your draft has expired.", show_alert=True)
                 return
@@ -1388,7 +1449,7 @@ class Bot:
                 self.bot.delete_message(chat_id, call.message.message_id)
                 self.bot.answer_callback_query(call.id, text="✅ Expense deleted!")
         else:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft:
                 draft_data = json.loads(active_draft['data_json'])
                 if 'files' in draft_data:
@@ -1428,7 +1489,7 @@ class Bot:
                 'debtors': [d['debtor_id'] for d in get_expense_debtors(expense_id)],
                 'files': get_expense_files(expense_id)
             }
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             draft_id = create_draft(chat_id, user_id, "expense", expires_at)
             update_draft(draft_id, draft_data, 5, expires_at) # Go to step 5
 
@@ -1453,7 +1514,6 @@ class Bot:
             update_draft(draft_id, draft_data, 5, expires_at)
 
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        set_menu_message_id(chat_id, None)
         message_id = call.message.message_id
         if message_id in self.clear_debt_timers:
             self.clear_debt_timers.pop(message_id).cancel()
@@ -1480,7 +1540,6 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening balances.", show_alert=True)
 
     def handle_reports(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -1500,7 +1559,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while opening reports.", show_alert=True)
 
     def handle_clear_full_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if not active_draft or active_draft['type'] != 'clear_debt':
             self.bot.answer_callback_query(call.id, text="❗ This action has expired.", show_alert=True)
             return
@@ -1508,7 +1567,7 @@ class Bot:
         draft_data = json.loads(active_draft['data_json'])
         draft_data['amount_to_clear'] = draft_data['total_debt_u5'] / 100000
         
-        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
         update_draft(active_draft['id'], draft_data, 2, expires_at)
         
         text, keyboard = render_wizard(
@@ -1522,7 +1581,7 @@ class Bot:
         self.bot.answer_callback_query(call.id)
 
     def handle_clear_debt_cancel(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if active_draft and active_draft['type'] == 'clear_debt':
             with get_connection() as conn:
                 conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
@@ -1551,7 +1610,7 @@ class Bot:
                 self.bot.answer_callback_query(call.id, text="❗ No debt to clear.", show_alert=True)
                 return
 
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             draft_id = create_draft(chat_id, user_id, "clear_debt", expires_at)
             
             draft_data = {
@@ -1582,7 +1641,7 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred.", show_alert=True)
 
     def handle_confirm_clear_debt(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if not active_draft or active_draft['type'] != 'clear_debt':
             self.bot.answer_callback_query(call.id, text="❗ This action has expired.", show_alert=True)
             return
@@ -1623,8 +1682,10 @@ class Bot:
             owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
             if owner_id:
                 logger.info(f"User {user_id} is resetting a wizard owned by {owner_id} back to the main menu. Deleting draft.")
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM drafts WHERE user_id = ? AND chat_id = ?", (owner_id, chat_id))
+                active_draft = get_active_draft(chat_id, owner_id, DB_TIMEZONE_OFFSET)
+                if active_draft:
+                    draft_data = json.loads(active_draft['data_json'])
+                    self._delete_draft_and_files(active_draft['id'], draft_data)
 
             set_settings_editor_id(chat_id, None)
             group_info = self.bot.get_chat(chat_id)
@@ -1651,8 +1712,10 @@ class Bot:
             owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
             if owner_id:
                 logger.info(f"User {user_id} is closing a wizard owned by {owner_id}. Deleting draft.")
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM drafts WHERE user_id = ? AND chat_id = ?", (owner_id, chat_id))
+                active_draft = get_active_draft(chat_id, owner_id, DB_TIMEZONE_OFFSET)
+                if active_draft:
+                    draft_data = json.loads(active_draft['data_json'])
+                    self._delete_draft_and_files(active_draft['id'], draft_data)
 
             set_settings_editor_id(chat_id, None)
             self.bot.delete_message(chat_id, call.message.message_id)
@@ -1662,7 +1725,6 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while closing the menu.", show_alert=True)
             
     def handle_history(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, offset: int = 0):
-        set_menu_message_id(chat_id, None)
         try:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
@@ -1684,24 +1746,16 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ An error occurred while fetching the history.", show_alert=True)
 
     def handle_settle_wizard_cancel(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if active_draft and active_draft['type'] == 'settlement':
             draft_data = json.loads(active_draft['data_json'])
-            if 'files' in draft_data:
-                for file_info in draft_data['files']:
-                    try:
-                        self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
-                    except Exception as e:
-                        logger.error(f"Error deleting file from channel: {e}")
-                    delete_file_by_id(file_info['file_row_id'])
-            with get_connection() as conn:
-                conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
+            self._delete_draft_and_files(active_draft['id'], draft_data)
             self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
             self.bot.answer_callback_query(call.id, text="Settlement draft cancelled.")
 
     def handle_toggle_payee(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payee_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             logger.debug(f"handle_toggle_payee: active_draft={active_draft}")
             if active_draft and active_draft['type'] == 'settlement' and active_draft['step'] == 1:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
@@ -1713,7 +1767,7 @@ class Bot:
 
                 draft_data['payee'] = payee_id
 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
@@ -1722,11 +1776,11 @@ class Bot:
 
     def handle_settle_edit_step(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, step: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'settlement':
                 draft_id, draft_data = active_draft['id'], json.loads(active_draft['data_json'])
                 
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1742,7 +1796,7 @@ class Bot:
 
     def handle_settle_full_amount(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'settlement' and active_draft['step'] == 2:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
@@ -1753,7 +1807,7 @@ class Bot:
                         truncated_owed_amount = int(owed_amount_float * 1000) / 1000
                         draft_data['amount'] = truncated_owed_amount
                         current_step += 1
-                        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(draft_id, draft_data, current_step, expires_at)
                         editor_name = get_user_display_name(user_id)
                         wizard_text, wizard_keyboard = render_wizard(
@@ -1773,13 +1827,13 @@ class Bot:
 
     def handle_settle_no_proof(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if active_draft and active_draft['type'] == 'settlement' and active_draft['step'] == 3:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
                 draft_data['no_proof'] = True
                 current_step += 1
-                expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+                expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
                 wizard_text, wizard_keyboard = render_wizard(
@@ -1805,7 +1859,7 @@ class Bot:
 
     def handle_settle_confirm(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         with get_connection() as conn:
-            active_draft = get_active_draft(chat_id, user_id)
+            active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
             if not active_draft or active_draft['type'] != 'settlement':
                 self.bot.answer_callback_query(call.id, text="❗ Your draft has expired or is invalid.", show_alert=True)
                 return
@@ -2011,7 +2065,7 @@ class Bot:
                 'files': get_settlement_files(settlement_id),
                 'no_proof': not get_settlement_files(settlement_id)
             }
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             draft_id = create_draft(chat_id, user_id, "settlement", expires_at)
             update_draft(draft_id, draft_data, 4, expires_at) # Go to step 4
 

@@ -1,7 +1,8 @@
 
 from datetime import datetime, timedelta
+from bot.utils.time import get_now_in_configured_timezone
 import json
-from bot.config import DRAFT_TTL_SECONDS
+from bot.config import DRAFT_TTL_SECONDS, DB_TIMEZONE_OFFSET
 from bot.db.repos import update_draft, get_user_display_name
 from bot.ui.renderers import render_wizard
 import threading
@@ -21,7 +22,7 @@ def handle_amount_input(bot, message, active_draft):
 
         draft_data['amount'] = amount
         current_step += 1
-        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
         update_draft(draft_id, draft_data, current_step, expires_at)
         
         editor_name = get_user_display_name(active_draft['user_id'])
@@ -62,9 +63,9 @@ def start_wizard(bot, call, chat_id, user_id, wizard_type):
                 return
 
         set_active_wizard_user_id(chat_id, user_id)
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         draft_id, draft_data, current_step = None, {}, 1
-        expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
 
         if active_draft and active_draft['type'] == wizard_type:
             draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
@@ -119,7 +120,7 @@ def handle_wizard_next(bot, call, chat_id, user_id, wizard_type):
     from bot.db.repos import get_active_draft, update_draft
     
     with get_connection() as conn:
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if active_draft and active_draft['type'] == wizard_type:
             draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
 
@@ -148,7 +149,7 @@ def handle_wizard_next(bot, call, chat_id, user_id, wizard_type):
                 if current_step < 4:
                     current_step += 1
             
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             update_draft(draft_id, draft_data, current_step, expires_at)
             update_wizard_after_file_processing(bot, chat_id, user_id, draft_data, current_step, wizard_type)
             bot.answer_callback_query(call.id)
@@ -157,12 +158,12 @@ def handle_wizard_back(bot, call, chat_id, user_id, wizard_type):
     from bot.db.repos import get_active_draft, update_draft
 
     with get_connection() as conn:
-        active_draft = get_active_draft(chat_id, user_id)
+        active_draft = get_active_draft(chat_id, user_id, DB_TIMEZONE_OFFSET)
         if active_draft and active_draft['type'] == wizard_type:
             draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
             if current_step > 1:
                 current_step -= 1
-            expires_at = (datetime.now() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat()
+            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
             update_draft(draft_id, draft_data, current_step, expires_at)
             update_wizard_after_file_processing(bot, chat_id, user_id, draft_data, current_step, wizard_type)
             bot.answer_callback_query(call.id)
