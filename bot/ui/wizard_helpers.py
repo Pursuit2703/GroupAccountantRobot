@@ -3,6 +3,7 @@ import telebot
 from bot.config import FILES_CHANNEL_ID
 from bot.db.repos import get_group_members, get_users_owed_by_user
 from bot.utils.currency import format_amount
+from bot.categories import CATEGORIES
 
 def generate_expense_step_2_buttons(draft_data):
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -15,20 +16,18 @@ def generate_expense_step_2_buttons(draft_data):
     return keyboard
 
 def generate_expense_step_3_buttons(draft_data):
-    categories = {
-        "Groceries": "🛒 Groceries",
-        "Hygiene": "🧼 Hygiene",
-        "Wifi": "🌐 Wifi",
-        "Electricity": "💡 Electricity",
-        "Gas": "🔥 Gas",
-        "Water": "💧 Water",
-        "Debt": "💸 Debt",
-        "Other": "📦 Other"
-    }
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
     selected_categories = draft_data.get('categories', [])
-    category_buttons = [telebot.types.InlineKeyboardButton(f"{'✅' if key in selected_categories else ''} {value}", callback_data=f"dm:set_category:{key}") for key, value in categories.items()]
-    keyboard.add(*category_buttons, row_width=2)
+    
+    buttons = []
+    for category in CATEGORIES:
+        name = category["name"]
+        emoji = category["emoji"]
+        is_selected = name in selected_categories
+        button_text = f"{'✅' if is_selected else ''} {emoji} {name}"
+        buttons.append(telebot.types.InlineKeyboardButton(button_text, callback_data=f"dm:set_category:{name}"))
+
+    keyboard.add(*buttons, row_width=2)
     return keyboard
 
 def generate_expense_step_4_buttons(draft_data, chat_id, user_id):

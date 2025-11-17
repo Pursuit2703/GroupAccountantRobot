@@ -18,6 +18,7 @@ from bot.ui.wizard_helpers import (
     generate_clear_debt_step_1_buttons,
     generate_clear_debt_step_2_buttons,
 )
+from bot.categories import CATEGORIES
 
 
 logger = get_logger(__name__)
@@ -33,8 +34,8 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
         telebot.types.InlineKeyboardButton("💸 Pay Debt", callback_data="dm:pay_debt")
     )
     keyboard.add(
-        telebot.types.InlineKeyboardButton("📂 Reports", callback_data="dm:reports"),
-        telebot.types.InlineKeyboardButton("📊 Balances", callback_data="dm:balances")
+        telebot.types.InlineKeyboardButton("📈 Reports", callback_data="dm:reports"),
+        telebot.types.InlineKeyboardButton("⚖️ Balances", callback_data="dm:balances")
     )
     keyboard.add(
         telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help"),
@@ -53,7 +54,7 @@ def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeybo
         telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics")
     )
     keyboard.row(
-        telebot.types.InlineKeyboardButton("📊 Export Data", callback_data="dm:export_data")
+        telebot.types.InlineKeyboardButton("📤 Export Data", callback_data="dm:export_data")
     )
     keyboard.row(
         telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
@@ -96,7 +97,7 @@ def render_balances_page(user_id: int, group_name: str, balance_summary: dict, a
             text += "\n"
             for debt in debts_owed_to_user:
                 from_user = debt['from_user_display_name']
-                keyboard.add(telebot.types.InlineKeyboardButton(f"🚮 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_start:{debt['from_user_id']}"))
+                keyboard.add(telebot.types.InlineKeyboardButton(f"🧹 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_start:{debt['from_user_id']}"))
 
     other_balances = [
         debt for debt in all_balances 
@@ -138,23 +139,15 @@ def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKey
 def render_spending_by_category(group_name: str, spending_data: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"📊 <b>Spending by Category for {group_name}</b>\n\n"
 
-    categories_emojis = {
-        "Groceries": "🛒",
-        "Hygiene": "🧼",
-        "Wifi": "🌐",
-        "Electricity": "💡",
-        "Gas": "🔥",
-        "Water": "💧",
-        "Debt": "💸",
-        "Other": "📦"
-    }
+    # Create a mapping from category name to emoji for quick lookup
+    category_emojis = {cat["name"]: cat["emoji"] for cat in CATEGORIES}
 
     if not spending_data:
         text += "No spending data available."
     else:
         for item in spending_data:
             category = item['category'] if item['category'] else "Uncategorized"
-            emoji = categories_emojis.get(category, "-")
+            emoji = category_emojis.get(category, "📦") # Default to 'Other' emoji
             amount = format_amount(item['total_amount'] / 100000)
             text += f"{emoji} {category}: {amount}\n"
 
@@ -348,6 +341,7 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     logger.debug(f"Rendering expense message with files: {files}")
 
+    category_emojis = {cat["name"]: cat["emoji"] for cat in CATEGORIES}
     amount_str = format_amount(expense['amount_u5'] / 100000)
     share_str = format_amount(share_u5 / 100000)
 
@@ -368,11 +362,13 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
         text += "\n"
 
     if description and category:
-        text += f'"{description}" (<i>{category}</i>)\n\n'
+        emoji = category_emojis.get(category, "")
+        text += f'"{description}" (<i>{emoji} {category}</i>)\n\n'
     elif description:
         text += f'"{description}"\n\n'
     elif category:
-        text += f"<i>{category}</i>\n\n"
+        emoji = category_emojis.get(category, "")
+        text += f"<i>{emoji} {category}</i>\n\n"
 
     debtor_mentions = []
     for debtor in debtors:
