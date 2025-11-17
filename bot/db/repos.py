@@ -5,6 +5,10 @@ from bot.db.connection import get_connection
 from bot.logger import get_logger
 logger = get_logger(__name__)
 
+def create_group_if_not_exists(chat_id: int):
+    with get_connection() as conn:
+        conn.execute("INSERT OR IGNORE INTO groups (chat_id, last_activity_at) VALUES (?, datetime('now'))", (chat_id,))
+
 def get_group(chat_id: int) -> dict | None:
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -12,30 +16,44 @@ def get_group(chat_id: int) -> dict | None:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+def get_group_settings(chat_id: int) -> dict:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT settings_json FROM groups WHERE chat_id = ?", (chat_id,))
+        row = cursor.fetchone()
+        if row and row['settings_json']:
+            return json.loads(row['settings_json'])
+        return {}
+
+def update_group_settings(chat_id: int, settings: dict) -> None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE groups SET settings_json = ? WHERE chat_id = ?", (json.dumps(settings), chat_id))
+
 def create_or_update_group_menu(chat_id: int, message_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO groups (chat_id, menu_message_id, menu_message_created_at, menu_message_last_updated_at, last_activity_at)
-            VALUES (?, ?, datetime('now', 'utc'), datetime('now', 'utc'), datetime('now', 'utc'))
+            VALUES (?, ?, datetime('now'), datetime('now'), datetime('now'))
             ON CONFLICT(chat_id) DO UPDATE SET
                 menu_message_id = excluded.menu_message_id,
                 menu_message_last_updated_at = excluded.menu_message_last_updated_at,
-                last_activity_at = datetime('now', 'utc')
+                last_activity_at = datetime('now')
         """, (chat_id, message_id))
 
 def update_group_last_activity(chat_id: int) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE groups SET last_activity_at = datetime('now', 'utc') WHERE chat_id = ?", (chat_id,))
+        cursor.execute("UPDATE groups SET last_activity_at = datetime('now') WHERE chat_id = ?", (chat_id,))
 
-def get_groups_with_old_menus(timeout_seconds: int) -> list[dict]:
+def get_groups_with_old_menus(timeout_seconds: int, timezone_offset: str) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT * FROM groups 
             WHERE menu_message_id IS NOT NULL 
-            AND last_activity_at < datetime('now', 'utc', '-{timeout_seconds} seconds')
+            AND last_activity_at < datetime('now', '{timezone_offset}', '-{timeout_seconds} seconds')
         """)
         return [dict(row) for row in cursor.fetchall()]
 
@@ -69,29 +87,77 @@ def get_draft_by_id(draft_id: int) -> dict | None:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-def get_active_draft(chat_id: int, user_id: int) -> dict | None:
+def get_draft_owner_by_message_id(chat_id: int, message_id: int) -> int | None:
     with get_connection() as conn:
         cursor = conn.cursor()
-        query = "SELECT * FROM drafts WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', 'utc') AND locked = 0 ORDER BY created_at DESC LIMIT 1"
-        params = (chat_id, user_id)
-        logger.debug(f"Executing query: {query} with params: {params}")
-       # Log current datetime('now') from SQLite perspective
-        cursor.execute("SELECT datetime('now', 'utc')")
-        sqlite_now = cursor.fetchone()[0]
-        logger.debug(f"SQLite datetime('now', 'utc'): {sqlite_now}")
-        cursor.execute(query, params)
+        cursor.execute("""
+            SELECT user_id FROM drafts
+            WHERE chat_id = ? AND json_extract(data_json, '$.wizard_message_id') = ?
+        """, (chat_id, message_id))
+        row = cursor.fetchone()
+        return row['user_id'] if row else None
+
+
+def get_active_draft(chat_id: int, user_id: int, timezone_offset: str):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, type, step, data_json, expires_at, user_id
+            FROM drafts
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (chat_id, user_id, timezone_offset),
+        )
         row = cursor.fetchone()
         if row:
-            logger.debug(f"Found active draft: ID={row['id']}, expires_at={row['expires_at']}")
-            logger.debug(f"Draft data from DB: {row['data_json']}")
-        logger.debug(f"Result of get_active_draft: {row}")
-        return dict(row) if row else None
+            return {
+                "id": row[0],
+                "type": row[1],
+                "step": row[2],
+                "data_json": row[3],
+                "expires_at": row[4],
+                "user_id": row[5],
+            }
+        return None
+
+
+def get_active_drafts_by_user(chat_id: int, user_id: int, timezone_offset: str):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, type, step, data_json, expires_at
+            FROM drafts
+            WHERE chat_id = ? AND user_id = ? AND expires_at > datetime('now', ?)
+            ORDER BY created_at DESC
+            """,
+            (chat_id, user_id, timezone_offset),
+        )
+        rows = cursor.fetchall()
+        drafts = []
+        for row in rows:
+            drafts.append(
+                {
+                    "id": row[0],
+                    "type": row[1],
+                    "step": row[2],
+                    "data_json": row[3],
+                    "expires_at": row[4],
+                }
+            )
+        return drafts
+
+
+
 
 def update_draft(draft_id: int, data_json: dict, step: int, expires_at: str) -> None:
     logger.debug(f"Updating draft {draft_id} with data: {data_json}")
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE drafts SET data_json = ?, step = ?, expires_at = ?, updated_at = datetime('now', 'utc') WHERE id = ?",
+        cursor.execute("UPDATE drafts SET data_json = ?, step = ?, expires_at = ?, updated_at = datetime('now') WHERE id = ?",
                        (json.dumps(data_json), step, expires_at, draft_id))
 
 def add_user_to_group_if_not_exists(user_id: int, chat_id: int) -> None:
@@ -101,16 +167,34 @@ def add_user_to_group_if_not_exists(user_id: int, chat_id: int) -> None:
         cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO group_users (user_id, chat_id) VALUES (?, ?)", (user_id, chat_id))
 
-def get_group_members(chat_id: int, exclude_user_id: int) -> list[dict]:
+def get_group_members(chat_id: int, exclude_user_id: int | None = None, exclude_from_settings: bool = True) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        logger.info(f"Fetching group members for chat_id: {chat_id}")
-        cursor.execute("""
+        
+        excluded_members = []
+        if exclude_from_settings:
+            settings = get_group_settings(chat_id)
+            excluded_members = settings.get('excluded_members', [])
+        
+        logger.info(f"Fetching group members for chat_id: {chat_id}, excluding: {excluded_members}")
+        
+        query = """
             SELECT DISTINCT u.id, u.display_name 
             FROM users u
             JOIN group_users gu ON u.id = gu.user_id
-            WHERE gu.chat_id = ? AND u.id != ?
-        """, (chat_id, exclude_user_id))
+            WHERE gu.chat_id = ?
+        """
+        params = [chat_id]
+        
+        if exclude_user_id is not None:
+            query += " AND u.id != ?"
+            params.append(exclude_user_id)
+        
+        if excluded_members:
+            query += f" AND u.id NOT IN ({','.join('?' for _ in excluded_members)})"
+            params.extend(excluded_members)
+            
+        cursor.execute(query, params)
         members = [dict(row) for row in cursor.fetchall()]
         logger.info(f"Found {len(members)} group members for chat {chat_id}: {members}")
         return members
@@ -133,9 +217,17 @@ def set_active_wizard_user_id(chat_id: int, user_id: int | None) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
         if user_id:
-            cursor.execute("UPDATE groups SET active_wizard_user_id = ?, active_wizard_locked_at = datetime('now', 'utc') WHERE chat_id = ?", (user_id, chat_id))
+            cursor.execute("UPDATE groups SET active_wizard_user_id = ?, active_wizard_locked_at = datetime('now') WHERE chat_id = ?", (user_id, chat_id))
         else:
             cursor.execute("UPDATE groups SET active_wizard_user_id = NULL, active_wizard_locked_at = NULL WHERE chat_id = ?", (chat_id,))
+
+def set_settings_editor_id(chat_id: int, user_id: int | None) -> None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if user_id:
+            cursor.execute("UPDATE groups SET settings_editor_id = ?, settings_locked_at = datetime('now') WHERE chat_id = ?", (user_id, chat_id))
+        else:
+            cursor.execute("UPDATE groups SET settings_editor_id = NULL, settings_locked_at = NULL WHERE chat_id = ?", (chat_id,))
 
 def delete_file_by_id(file_row_id: int) -> None:
     with get_connection() as conn:
@@ -200,7 +292,7 @@ def update_debtor_status(expense_id: int, debtor_id: int, status: str) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE expense_debtors SET status = ?, status_at = datetime('now', 'utc') WHERE expense_id = ? AND debtor_id = ?",
+            "UPDATE expense_debtors SET status = ?, status_at = datetime('now') WHERE expense_id = ? AND debtor_id = ?",
             (status, expense_id, debtor_id),
         )
         
@@ -219,7 +311,7 @@ def upsert_debt(from_user_id: int, to_user_id: int, amount_u5: int) -> None:
         debt_xy = cursor.fetchone()
         if debt_xy:
             new_amount = debt_xy[0] + amount_u5
-            cursor.execute("UPDATE debts SET amount_u5 = ?, updated_at = datetime('now', 'utc') WHERE from_user_id = ? AND to_user_id = ?", (new_amount, from_user_id, to_user_id))
+            cursor.execute("UPDATE debts SET amount_u5 = ?, updated_at = datetime('now') WHERE from_user_id = ? AND to_user_id = ?", (new_amount, from_user_id, to_user_id))
         else:
             # 2. Get existing debt to_user -> from_user
             cursor.execute("SELECT amount_u5 FROM debts WHERE from_user_id = ? AND to_user_id = ?", (to_user_id, from_user_id))
@@ -232,7 +324,7 @@ def upsert_debt(from_user_id: int, to_user_id: int, amount_u5: int) -> None:
                         cursor.execute("INSERT INTO debts (from_user_id, to_user_id, amount_u5) VALUES (?, ?, ?)", (from_user_id, to_user_id, new_amount))
                 else:
                     new_amount = debt_yx[0] - amount_u5
-                    cursor.execute("UPDATE debts SET amount_u5 = ?, updated_at = datetime('now', 'utc') WHERE from_user_id = ? AND to_user_id = ?", (new_amount, to_user_id, from_user_id))
+                    cursor.execute("UPDATE debts SET amount_u5 = ?, updated_at = datetime('now') WHERE from_user_id = ? AND to_user_id = ?", (new_amount, to_user_id, from_user_id))
             else:
                 cursor.execute("INSERT INTO debts (from_user_id, to_user_id, amount_u5) VALUES (?, ?, ?)", (from_user_id, to_user_id, amount_u5))
 
@@ -424,7 +516,7 @@ def update_settlement_status(settlement_id: int, status: str) -> None:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE settlements SET status = ?, confirmed_at = CASE WHEN ? = 'confirmed' THEN datetime('now', 'utc') ELSE NULL END WHERE id = ?",
+            "UPDATE settlements SET status = ?, status_at = datetime('now'), confirmed_at = CASE WHEN ? = 'confirmed' THEN datetime('now') ELSE NULL END WHERE id = ?",
             (status, status, settlement_id),
         )
 
@@ -493,3 +585,80 @@ def get_owed_amount(from_user_id: int, to_user_id: int) -> int:
         cursor.execute("SELECT amount_u5 FROM debts WHERE from_user_id = ? AND to_user_id = ?", (from_user_id, to_user_id))
         row = cursor.fetchone()
         return row['amount_u5'] if row else 0
+
+def get_spending_by_category(chat_id: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT category, SUM(amount_u5) as total_amount
+            FROM expenses
+            WHERE chat_id = ?
+            GROUP BY category
+            ORDER BY total_amount DESC
+        """, (chat_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_old_stale_drafts(timezone_offset: str) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM drafts WHERE expires_at < datetime('now', '{timezone_offset}')")
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_rejected_expenses(seconds: int, timezone_offset: str) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT DISTINCT e.id, e.chat_id, e.message_id
+            FROM expenses e
+            JOIN expense_debtors ed ON e.id = ed.expense_id
+            WHERE ed.status = 'rejected'
+            AND ed.status_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+        """, (seconds,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_rejected_settlements(seconds: int, timezone_offset: str) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT id, chat_id, message_id
+            FROM settlements
+            WHERE status = 'rejected'
+            AND status_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+        """, (seconds,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_pending_expenses(seconds: int, timezone_offset: str) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT DISTINCT e.id, e.chat_id, e.message_id
+            FROM expenses e
+            JOIN expense_debtors ed ON e.id = ed.expense_id
+            WHERE ed.status = 'pending'
+            AND e.created_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+        """, (seconds,))
+        return [dict(row) for row in cursor.fetchall()]
+
+def get_old_pending_settlements(seconds: int, timezone_offset: str) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT id, chat_id, message_id
+            FROM settlements
+            WHERE status = 'pending'
+            AND created_at < datetime('now', '{timezone_offset}', '-' || ? || ' seconds')
+        """, (seconds,))
+        return [dict(row) for row in cursor.fetchall()]
+def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT u.display_name, SUM(e.amount_u5) as total_amount
+            FROM expenses e
+            JOIN users u ON e.payer_id = u.id
+            WHERE e.chat_id = ? AND e.created_at >= date('now', '-{days} days')
+            GROUP BY u.display_name
+            ORDER BY total_amount DESC
+        """, (chat_id,))
+        return [dict(row) for row in cursor.fetchall()]

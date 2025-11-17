@@ -1,10 +1,25 @@
 
 import telebot
 from bot.config import CURRENCY, FILES_CHANNEL_ID
-from bot.db.repos import get_group_members, get_users_owed_by_user, get_owed_amount, get_user, get_debt_between_users, get_user_display_name
+from bot.db.repos import get_group_members, get_users_owed_by_user, get_owed_amount, get_user, get_debt_between_users, get_user_display_name, get_owed_amount
 from bot.utils.currency import format_amount
 from datetime import datetime
 from bot.logger import get_logger
+from bot.ui.wizard_config import WIZARD_CONFIGS
+from bot.ui.wizard_helpers import (
+    generate_expense_step_2_buttons,
+    generate_expense_step_3_buttons,
+    generate_expense_step_4_buttons,
+    generate_expense_step_5_buttons,
+    generate_settlement_step_1_buttons,
+    generate_settlement_step_2_buttons,
+    generate_settlement_step_3_buttons,
+    generate_settlement_step_4_buttons,
+    generate_clear_debt_step_1_buttons,
+    generate_clear_debt_step_2_buttons,
+)
+from bot.categories import CATEGORIES
+
 
 logger = get_logger(__name__)
 
@@ -16,53 +31,208 @@ def render_main_menu(group_name: str, active_drafts_count: int = 0) -> tuple[str
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         telebot.types.InlineKeyboardButton("➕ Add Expense", callback_data="dm:add_expense"),
-        telebot.types.InlineKeyboardButton("💸 Pay My Debts", callback_data="dm:settle_debt")
+        telebot.types.InlineKeyboardButton("💸 Pay Debt", callback_data="dm:pay_debt")
     )
-    keyboard.row(
-        telebot.types.InlineKeyboardButton("📊 My Balance", callback_data="dm:my_balance"),
-        telebot.types.InlineKeyboardButton("📋 All Balances", callback_data="dm:all_balances")
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("📈 Reports", callback_data="dm:reports"),
+        telebot.types.InlineKeyboardButton("⚖️ Balances", callback_data="dm:balances")
     )
-    keyboard.row(
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help"),
+        telebot.types.InlineKeyboardButton("⚙️ Settings", callback_data="dm:settings")
+    )
+    keyboard.add(telebot.types.InlineKeyboardButton("❌ Close", callback_data="dm:close_menu"))
+    return text, keyboard
+
+def render_reports_menu(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📈 <b>Reports for {group_name}</b>\n\n"
+    text += "Select a report to view:"
+
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
         telebot.types.InlineKeyboardButton("📜 History", callback_data="dm:history"),
-        telebot.types.InlineKeyboardButton("❓ Help", callback_data="dm:help")
+        telebot.types.InlineKeyboardButton("📈 Analytics", callback_data="dm:analytics")
     )
     keyboard.row(
-        telebot.types.InlineKeyboardButton("📊 Export Data", callback_data="dm:export_data")
+        telebot.types.InlineKeyboardButton("📤 Export Data", callback_data="dm:export_data")
     )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu")
+    )
+    return text, keyboard
+
+def render_balances_page(user_id: int, group_name: str, balance_summary: dict, all_balances: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    user_name = get_user_display_name(user_id)
+    text = f"📊 <b>Balances for {group_name}</b>\n\n"
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=1)
+    text += f"👤 <b>Your Balance Summary ({user_name})</b>\n"
+
+    total_owed = balance_summary.get('total_owed', 0) / 100000
+    total_owed_to_user = balance_summary.get('total_owed_to_user', 0) / 100000
+
+    if total_owed_to_user > total_owed and total_owed_to_user - total_owed >= 0.01:
+        net_balance = total_owed_to_user - total_owed
+        text += f"🎉 You are owed a net total of: {format_amount(net_balance)}\n"
+    elif total_owed > total_owed_to_user and total_owed - total_owed_to_user >= 0.01:
+        net_balance = total_owed - total_owed_to_user
+        text += f"💸 You owe a net total of: {format_amount(net_balance)}\n"
+    else:
+        text += "✅ You are all settled up!\n"
+
+    if balance_summary['detailed_debts']:
+        text += "\n<b>Your Debts:</b>\n"
+        debts_owed_to_user = []
+        for debt in balance_summary['detailed_debts']:
+            from_user = debt['from_user_display_name']
+            to_user = debt['to_user_display_name']
+            amount = format_amount(debt['amount_u5'] / 100000)
+
+            if debt['from_user_id'] == user_id:
+                text += f"• You owe {to_user}: {amount}\n"
+            else:
+                text += f"• {from_user} owes you: {amount}\n"
+                debts_owed_to_user.append(debt)
+        
+        if debts_owed_to_user:
+            text += "\n"
+            for debt in debts_owed_to_user:
+                from_user = debt['from_user_display_name']
+                keyboard.add(telebot.types.InlineKeyboardButton(f"🧹 Clear {from_user}'s Debt", callback_data=f"dm:clear_debt_start:{debt['from_user_id']}"))
+
+    other_balances = [
+        debt for debt in all_balances 
+        if debt['from_user_id'] != user_id and debt['to_user_id'] != user_id
+    ]
+
+    if other_balances:
+        text += "\n<b>Other Balances:</b>\n"
+        for debt in other_balances:
+            from_user = debt['from_user_display_name']
+            to_user = debt['to_user_display_name']
+            amount = format_amount(debt['amount_u5'] / 100000)
+            text += f"• {from_user} owes {to_user}: {amount}\n"
+
+    if not balance_summary['detailed_debts'] and not other_balances:
+        text += "\nEveryone is settled up! 🎉"
+
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    return text, keyboard
+
+
+def render_analytics_page(group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📈 <b>Analytics for {group_name}</b>\n\n"
+    text += "Select an analytics report to view:"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("📊 By Category", callback_data="dm:analytics_by_category")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("🗓️ Week", callback_data="dm:analytics_paid_week"),
+        telebot.types.InlineKeyboardButton("🗓️ Month", callback_data="dm:analytics_paid_month")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:reports")
+    )
+    return text, keyboard
+
+def render_spending_by_category(group_name: str, spending_data: list[dict]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"📊 <b>Spending by Category for {group_name}</b>\n\n"
+
+    # Create a mapping from category name to emoji for quick lookup
+    category_emojis = {cat["name"]: cat["emoji"] for cat in CATEGORIES}
+
+    if not spending_data:
+        text += "No spending data available."
+    else:
+        for item in spending_data:
+            category = item['category'] if item['category'] else "Uncategorized"
+            emoji = category_emojis.get(category, "📦") # Default to 'Other' emoji
+            amount = format_amount(item['total_amount'] / 100000)
+            text += f"{emoji} {category}: {amount}\n"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
+    return text, keyboard
+
+def render_who_paid_how_much(group_name: str, payment_data: list[dict], period: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"🗓️ <b>Who Paid How Much ({period}) for {group_name}</b>\n\n"
+
+    if not payment_data:
+        text += "No payment data available for this period."
+    else:
+        for item in payment_data:
+            display_name = item['display_name']
+            amount = format_amount(item['total_amount'] / 100000)
+            text += f"👤 {display_name}: {amount}\n"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:analytics"))
+    return text, keyboard
+
+def render_settings_page(group_name: str, settings: dict, editor_name: str | None, internal_user_id: int, telegram_user_id: int, admin_ids: list[int]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"⚙️ <b>Settings for {group_name}</b>\n\n"
+
+    if editor_name:
+        text += f"<i>Currently being edited by {editor_name}.</i>\n\n"
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+
+    auto_confirm_expense_enabled = internal_user_id in settings.get('auto_confirm_expense_users', [])
+    auto_confirm_expense_text = f"{'✅' if auto_confirm_expense_enabled else '❌'} Auto-Confirm Expenses: {'Enabled' if auto_confirm_expense_enabled else 'Disabled'}"
+    keyboard.add(telebot.types.InlineKeyboardButton(auto_confirm_expense_text, callback_data="dm:toggle_auto_confirm_expense"))
+
+    auto_confirm_settlement_enabled = internal_user_id in settings.get('auto_confirm_settlement_users', [])
+    auto_confirm_settlement_text = f"{'✅' if auto_confirm_settlement_enabled else '❌'} Auto-Confirm Settlements: {'Enabled' if auto_confirm_settlement_enabled else 'Disabled'}"
+    keyboard.add(telebot.types.InlineKeyboardButton(auto_confirm_settlement_text, callback_data="dm:toggle_auto_confirm_settlement"))
+
+    if telegram_user_id in admin_ids:
+        keyboard.add(telebot.types.InlineKeyboardButton("🚫 Manage Excluded Members", callback_data="dm:manage_excluded_members"))
+
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+    return text, keyboard
+
+def render_excluded_members_page(group_name: str, members: list[dict], excluded_members: list[int]) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"🚫 <b>Manage Excluded Members for {group_name}</b>\n\n"
+    text += "Select members to exclude from expense splits."
+
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    
+    buttons = []
+    for member in members:
+        is_excluded = member['id'] in excluded_members
+        button_text = f"{'❌' if is_excluded else '✅'} {member['display_name']}"
+        buttons.append(telebot.types.InlineKeyboardButton(button_text, callback_data=f"dm:toggle_excluded_member:{member['id']}"))
+
+    # Add buttons in rows of 2
+    for i in range(0, len(buttons), 2):
+        keyboard.row(*buttons[i:i+2])
+
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:settings"))
     return text, keyboard
 
 
 
-def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
 
-    categories = {
-
-        "Groceries": "🛒 Groceries",
-
-        "Hygiene": "🧼 Hygiene",
-
-        "Wifi": "🌐 Wifi",
-
-        "Electricity": "💡 Electricity",
-
-        "Gas": "🔥 Gas",
-
-        "Water": "💧 Water",
-
-        "Debt": "💸 Debt",
-
-        "Other": "📦 Other"
-
-    }
-
-
-
-    title = "➕ New Expense"
-    if current_step == 5:
-        title += " (Review)"
-    text = f"{title}\n\n"
-
+def render_clear_debt_confirmation(debtor_name: str, amount_str: str, debtor_id: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    text = f"Are you sure you want to clear the debt of {amount_str} from {debtor_name}?"
     keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        telebot.types.InlineKeyboardButton("✅ Yes, Clear Debt", callback_data=f"dm:confirm_clear_debt:{debtor_id}"),
+        telebot.types.InlineKeyboardButton("❌ No, Cancel", callback_data="dm:balances")
+    )
+    return text, keyboard
+
+
+def render_wizard(wizard_type: str, draft_data: dict, current_step: int, chat_id: int = None, user_id: int = None, editor_name: str = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
+    config = WIZARD_CONFIGS[wizard_type]
+    title = config['title']
+    if editor_name and wizard_type != 'clear_debt':
+        title += f" by {editor_name}"
+    if current_step == config.get('review_step'):
+        title += " (Review)"
+    
+    text = f"{title}\n\n"
 
     # Display summary for all steps except the first
     if current_step > 1:
@@ -76,6 +246,9 @@ def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: 
         if 'debtors' in draft_data and draft_data['debtors']:
             debtor_names = [get_user_display_name(debtor_id) for debtor_id in draft_data['debtors']]
             summary_items.append(f"<b>Debtors:</b> {', '.join(debtor_names)}")
+        if 'payee' in draft_data:
+            payee_name = get_user_display_name(draft_data['payee'])
+            summary_items.append(f"<b>To:</b> {payee_name}")
         
         if summary_items:
             text += "\n".join(summary_items) + "\n"
@@ -87,207 +260,79 @@ def render_add_expense_wizard(draft_data: dict, current_step: int, total_steps: 
                 file_type = "Image" if file_info['mime'] in ['image/jpeg', 'image/png'] else "File"
                 file_links.append(f'  - <a href="{file_link}">{file_type} {i+1}</a>')
             text += f"\n📎 <b>Files:</b>\n" + "\n".join(file_links)
-        
-        text += "\n\n"
-
-
-    # Dynamic text based on step
-    if current_step == 1:
-        text += "Enter the total amount."
-    elif current_step == 2:
-        text += "Send one or more receipts (images or PDFs)."
-    elif current_step == 3:
-        text += "Add a description or category."
-        selected_categories = draft_data.get('categories', [])
-        if selected_categories == ['Debt']:
-            text += "\n\nℹ️ Note: As a 'Debt', the payer will not be included in the split."
-    elif current_step == 4:
-        if draft_data.get('categories') == ['Debt']:
-            text += "Select who owes you."
-        else:
-            text += "Select who you should split the bill with."
-    elif current_step == 5:
-        text += "Review the details below."
-        # Calculate remainder based on formatted share
-        share_u5 = (draft_data['amount'] * 100000) // (len(draft_data['debtors']) + 1)
-        share_float = share_u5 / 100000
-        truncated_share = int(share_float * 1000) / 1000
-        total_formatted_share = truncated_share * (len(draft_data['debtors']) + 1)
-        
-        expense_float = draft_data['amount']
-        formatted_expense = float(f"{expense_float:.3f}")
-
-        remainder = formatted_expense - total_formatted_share
-
-        if remainder > 0.0001:
-            remainder_str = f"{remainder:.3f}".rstrip('0').rstrip('.')
-            text += f"\n\nℹ️ <b>Rounding Adjustment:</b>\nTo ensure a fair split, the remaining <b>{remainder_str} {CURRENCY}</b> of the expense has been assigned to you as the payer."
-    elif current_step == 6:
-        text += "Ready to publish this expense to the group?"
-
-
-    # Step-specific buttons
-    if current_step == 2:
-        if 'files' in draft_data and draft_data['files']:
-            for i, file_info in enumerate(draft_data['files']):
-                file_type = "Image" if file_info['mime'] in ['image/jpeg', 'image/png'] else "File"
-                keyboard.add(telebot.types.InlineKeyboardButton(f"🗑️ Delete {file_type} {i+1}", callback_data=f"dm:delete_file:{file_info['file_row_id']}"))
-        if not draft_data.get('no_receipt') and not draft_data.get('files'):
-             keyboard.row(telebot.types.InlineKeyboardButton("➡️ No Receipt", callback_data="dm:wizard_no_receipt"))
-
-    elif current_step == 3:
-        selected_categories = draft_data.get('categories', [])
-        category_buttons = [telebot.types.InlineKeyboardButton(f"{'✅' if key in selected_categories else ''} {value}", callback_data=f"dm:set_category:{key}") for key, value in categories.items()]
-        keyboard.add(*category_buttons, row_width=2)
-
-    elif current_step == 4:
-        members = get_group_members(chat_id, exclude_user_id=user_id)
-        if members:
-            selected_debtors = draft_data.get('debtors', [])
-            debtor_buttons = [telebot.types.InlineKeyboardButton(f"{'✅' if member['id'] in selected_debtors else ''} {member['display_name']}", callback_data=f"dm:toggle_debtor:{member['id']}") for member in members]
-            keyboard.add(*debtor_buttons, row_width=2)
-            all_selected = set(m['id'] for m in members) == set(selected_debtors)
-            toggle_all_label = "☑️ Deselect All" if all_selected else "✅ Select All"
-            keyboard.row(telebot.types.InlineKeyboardButton(toggle_all_label, callback_data="dm:toggle_all_debtors"))
-
-    elif current_step == 5:
-        keyboard.row(
-            telebot.types.InlineKeyboardButton("✏️ Amount", callback_data="dm:edit_amount"),
-            telebot.types.InlineKeyboardButton("✏️ Files", callback_data="dm:edit_files")
-        )
-        keyboard.row(
-            telebot.types.InlineKeyboardButton("✏️ Cat/Desc", callback_data="dm:edit_category_desc"),
-            telebot.types.InlineKeyboardButton("✏️ Debtors", callback_data="dm:edit_debtors")
-        )
-
-    # Navigation row
-    navigation_row = []
-    if current_step == 1:
-        navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
-    elif current_step > 1:
-        navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:wizard_back"))
-
-    navigation_row.append(telebot.types.InlineKeyboardButton("❌ Cancel", callback_data="dm:wizard_cancel"))
-
-    if current_step < 5:
-         navigation_row.append(telebot.types.InlineKeyboardButton("Next ▶", callback_data="dm:wizard_next"))
-    elif current_step == 5 or current_step == 6:
-        navigation_row.append(telebot.types.InlineKeyboardButton("✅ Request Confirmation", callback_data="dm:wizard_confirm"))
-
-    if navigation_row:
-        keyboard.row(*navigation_row)
-
-    return text, keyboard
-
-
-def render_settle_debt_wizard(draft_data: dict, current_step: int, total_steps: int, chat_id: int = None, user_id: int = None) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    title = "💸 Settle Debt"
-    if current_step == 4:
-        title += " (Review)"
-    text = f"{title}\n\n"
-
-    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
-
-    # Display summary for all steps except the first
-    if current_step > 1:
-        summary_items = []
-        if 'payee' in draft_data:
-            payee_name = get_user_display_name(draft_data['payee'])
-            summary_items.append(f"<b>To:</b> {payee_name}")
-        if 'amount' in draft_data:
-            summary_items.append(f"<b>Amount:</b> {format_amount(draft_data['amount'])}")
-        
-        if summary_items:
-            text += "\n".join(summary_items) + "\n"
-
-        if 'files' in draft_data and draft_data['files']:
-            file_links = []
-            for i, file_info in enumerate(draft_data['files']):
-                file_link = f"https://t.me/c/{str(FILES_CHANNEL_ID)[4:]}/{file_info['origin_channel_message_id']}"
-                file_type = "Image" if file_info['mime'] in ['image/jpeg', 'image/png'] else "File"
-                file_links.append(f'  - <a href="{file_link}">{file_type} {i+1}</a>')
-            text += f"\n📎 <b>Proof:</b>\n" + "\n".join(file_links)
+        elif draft_data.get('no_proof'):
+            text += "\n📎 <b>Proof:</b> Paying with cash\n"
         
         text += "\n\n"
 
     # Dynamic text based on step
-    if current_step == 1:
-        text += "Please select the person you paid."
-    elif current_step == 2:
-        text += "Please enter the amount you paid."
-        if 'payee' in draft_data:
-            owed_amount = get_owed_amount(user_id, draft_data['payee'])
-            if owed_amount > 0:
-                text += f"\n\nℹ️ You owe {get_user_display_name(draft_data['payee'])} {format_amount(owed_amount / 100000)}."
-    elif current_step == 3:
-        text += "Please upload proof of payment (e.g., a screenshot)."
-    elif current_step == 4:
-        text += "Everything look correct? You can still go back or edit details."
+    step_config = config['steps'][current_step]
+    instruction = step_config['instruction']
+    if wizard_type == 'settlement' and current_step == 2:
         payee_name = get_user_display_name(draft_data['payee'])
-        current_debt = get_debt_between_users(user_id, draft_data['payee']) / 100000
-        if draft_data.get('amount', 0) > current_debt and current_debt > 0:
-            new_balance = draft_data['amount'] - current_debt
-            if new_balance > 0.01:
-                text += f"\n\n⚠️ Overpayment: {payee_name} will owe you {format_amount(new_balance)}."
+        total_debt = get_owed_amount(user_id, draft_data['payee']) / 100000
+        total_debt_str = format_amount(total_debt)
+        instruction = instruction.format(payee_name=payee_name, total_debt_str=total_debt_str)
+    elif wizard_type == 'expense' and current_step == 1 and 'amount' in draft_data:
+        instruction += f"\n\nCurrent amount: {format_amount(draft_data['amount'])}"
+    elif wizard_type == 'clear_debt':
+        if current_step == 1:
+            total_debt_str = format_amount(draft_data['total_debt_u5'] / 100000)
+            instruction = instruction.format(total_debt_str=total_debt_str)
+        elif current_step == 2:
+            debtor_name = get_user_display_name(draft_data['debtor_id'])
+            amount_to_clear = draft_data['amount_to_clear']
+            total_debt = draft_data['total_debt_u5'] / 100000
+            if amount_to_clear == total_debt:
+                amount_text = f"the full debt of <b>{format_amount(total_debt)}</b>"
             else:
-                text += f"\n\n✅ This will settle your debt with {payee_name}."
+                amount_text = f"<b>{format_amount(amount_to_clear)}</b> of <b>{format_amount(total_debt)}</b> debt"
+            instruction = instruction.format(amount_text=amount_text, debtor_name=debtor_name)
+    text += instruction
 
     # Step-specific buttons
-    if current_step == 1:
-        owed_users = get_users_owed_by_user(user_id, chat_id)
-        if owed_users:
-            if len(owed_users) == 1 and 'payee' not in draft_data:
-                draft_data['payee'] = owed_users[0]['user_id']
-            payee_buttons = [telebot.types.InlineKeyboardButton(f"{'✅' if draft_data.get('payee') == user['user_id'] else ''} {user['display_name']}", callback_data=f"dm:toggle_payee:{user['user_id']}") for user in owed_users]
-            keyboard.add(*payee_buttons, row_width=2)
-        else:
-            text += "\n\nℹ️ You don't owe anyone in this group. You can't settle a debt."
-            keyboard.add(telebot.types.InlineKeyboardButton("◀ Back to Main Menu", callback_data="dm:main_menu"))
-            # Disable next button if no one is owed
-            navigation_row = []
-            navigation_row.append(telebot.types.InlineKeyboardButton("❌ Cancel", callback_data="dm:settle_wizard_cancel"))
-            if navigation_row:
-                keyboard.row(*navigation_row)
-            return text, keyboard
-    elif current_step == 3:
-        if 'files' in draft_data and draft_data['files']:
-            for i, file_info in enumerate(draft_data['files']):
-                file_type = "Image" if file_info['mime'] in ['image/jpeg', 'image/png'] else "File"
-                keyboard.add(telebot.types.InlineKeyboardButton(f"🗑️ Delete {file_type} {i+1}", callback_data=f"dm:delete_file:{file_info['file_row_id']}"))
-        if not draft_data.get('no_proof') and not draft_data.get('files'):
-            keyboard.row(telebot.types.InlineKeyboardButton("➡️ I am paying with cash", callback_data="dm:settle_no_proof"))
-    elif current_step == 4:
-        owed_users = get_users_owed_by_user(user_id, chat_id)
-        edit_buttons = []
-        if len(owed_users) > 1:
-            edit_buttons.append(telebot.types.InlineKeyboardButton("✏️ Payee", callback_data="dm:settle_edit_step:1"))
+    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
+    if step_config['buttons']:
+        button_func_name = step_config['buttons']
+        button_func = globals()[button_func_name]
+        # Pass chat_id and user_id only if the function needs them
+        import inspect
+        sig = inspect.signature(button_func)
+        params = {}
+        if 'draft_data' in sig.parameters:
+            params['draft_data'] = draft_data
+        if 'chat_id' in sig.parameters:
+            params['chat_id'] = chat_id
+        if 'user_id' in sig.parameters:
+            params['user_id'] = user_id
         
-        edit_buttons.append(telebot.types.InlineKeyboardButton("✏️ Amount", callback_data="dm:settle_edit_step:2"))
-        edit_buttons.append(telebot.types.InlineKeyboardButton("✏️ Proof", callback_data="dm:settle_edit_step:3"))
-        keyboard.row(*edit_buttons)
+        keyboard = button_func(**params)
+
 
     # Navigation row
-    navigation_row = []
-    if current_step > 1:
-        owed_users = get_users_owed_by_user(user_id, chat_id)
-        if current_step == 2 and len(owed_users) == 1:
+    if wizard_type != 'clear_debt':
+        navigation_row = []
+        if current_step == 1:
             navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+        elif current_step > 1:
+            navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:wizard_back"))
+
+        navigation_row.append(telebot.types.InlineKeyboardButton("❌ Cancel", callback_data="dm:wizard_cancel"))
+
+        if current_step < config['total_steps']:
+             navigation_row.append(telebot.types.InlineKeyboardButton("Next ▶", callback_data="dm:wizard_next"))
         else:
-            navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:settle_wizard_back"))
-    else:
-        navigation_row.append(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
+            if wizard_type == 'settlement':
+                callback_data = "dm:settle_confirm"
+            else:
+                callback_data = "dm:wizard_confirm"
+            navigation_row.append(telebot.types.InlineKeyboardButton("✅ Request Confirmation", callback_data=callback_data))
 
-    navigation_row.append(telebot.types.InlineKeyboardButton("❌ Cancel", callback_data="dm:settle_wizard_cancel"))
-
-    if current_step < 4:
-        navigation_row.append(telebot.types.InlineKeyboardButton("Next ▶", callback_data="dm:settle_wizard_next"))
-    else:
-        navigation_row.append(telebot.types.InlineKeyboardButton("✅ Request Confirmation", callback_data="dm:settle_confirm"))
-
-    if navigation_row:
-        keyboard.row(*navigation_row)
+        if navigation_row:
+            keyboard.row(*navigation_row)
 
     return text, keyboard
+
 
 
 
@@ -296,29 +341,34 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     logger.debug(f"Rendering expense message with files: {files}")
 
+    category_emojis = {cat["name"]: cat["emoji"] for cat in CATEGORIES}
     amount_str = format_amount(expense['amount_u5'] / 100000)
-    share_float = share_u5 / 100000
-    truncated_share = int(share_float * 1000) / 1000
-    share_str = format_amount(truncated_share)
+    share_str = format_amount(share_u5 / 100000)
 
     description = expense.get('description')
     category = expense.get('category')
 
     # Determine if the expense is disputed
     is_disputed = any(d['status'] == 'rejected' for d in debtors)
+    all_confirmed = all(d['status'] == 'confirmed' for d in debtors)
 
-    text = f"🧾 <b>New Expense: {amount_str} from {payer_name}</b>\n"
+    title_prefix = "New Expense"
+    if all_confirmed:
+        title_prefix = "Expense"
+    text = f"🧾 <b>{title_prefix}: {amount_str} from {payer_name}</b>\n"
     if is_disputed:
         text += "<b>Disputed 🔴</b>\n\n"
     else:
         text += "\n"
 
     if description and category:
-        text += f'"{description}" (<i>{category}</i>)\n\n'
+        emoji = category_emojis.get(category, "")
+        text += f'"{description}" (<i>{emoji} {category}</i>)\n\n'
     elif description:
         text += f'"{description}"\n\n'
     elif category:
-        text += f"<i>{category}</i>\n\n"
+        emoji = category_emojis.get(category, "")
+        text += f"<i>{emoji} {category}</i>\n\n"
 
     debtor_mentions = []
     for debtor in debtors:
@@ -343,17 +393,13 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
             file_links.append(f'<a href="{file_link}">{file_type} {i+1}</a>')
         text += f"\n📎 Files: {', '.join(file_links)}\n"
 
-    share_float = share_u5 / 100000
-    truncated_share = int(share_float * 1000) / 1000
-    share_str = format_amount(truncated_share)
-
     # Calculate remainder based on formatted share
     if expense.get('category') == 'Debt':
         participants_count = len(debtors)
     else:
         participants_count = len(debtors) + 1
 
-    total_formatted_share = truncated_share * participants_count
+    total_formatted_share = (share_u5 / 100000) * participants_count
     
     expense_float = expense['amount_u5'] / 100000
     formatted_expense = float(f"{expense_float:.3f}")
@@ -387,83 +433,6 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     return text, keyboard
 
-    if files:
-        file_links = []
-        for i, file_info in enumerate(files):
-            file_link = f"https://t.me/c/{str(FILES_CHANNEL_ID)[4:]}/{file_info['origin_channel_message_id']}"
-            file_type = "Image" if file_info['mime'] in ['image/jpeg', 'image/png'] else "File"
-            file_links.append(f'<a href="{file_link}">{file_type} {i+1}</a>')
-        text += f"\n📎 Files: {', '.join(file_links)}\n"
-
-    created_at = datetime.fromisoformat(expense['created_at']).strftime('%b %d, %Y, %H:%M')
-    text += f"\n🗓️ {created_at}"
-
-    keyboard = telebot.types.InlineKeyboardMarkup(row_width=2)
-    has_pending_debtors = any(d['status'] == 'pending' for d in debtors)
-    all_confirmed = all(d['status'] == 'confirmed' for d in debtors)
-
-    if has_pending_debtors:
-        keyboard.add(
-            telebot.types.InlineKeyboardButton("✅ Confirm", callback_data=f"dm:confirm_debt:{expense['id']}"),
-            telebot.types.InlineKeyboardButton("❌ Reject", callback_data=f"dm:reject_debt:{expense['id']}")
-        )
-
-    if not all_confirmed:
-        keyboard.add(
-            telebot.types.InlineKeyboardButton("✏️ Edit & Resubmit", callback_data=f"dm:edit_expense:{expense['id']}"),
-            telebot.types.InlineKeyboardButton("🗑️ Delete Expense", callback_data=f"dm:delete_expense:{expense['id']}")
-        )
-
-    return text, keyboard
-
-
-def render_all_balances_message(balances: list[dict], group_name: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"📊 <b>All Balances for {group_name}</b>\n\n"
-
-    if not balances:
-        text += "Everyone is settled up! 🎉"
-    else:
-        for debt in balances:
-            from_user = debt['from_user_display_name']
-            to_user = debt['to_user_display_name']
-            amount = format_amount(debt['amount_u5'] / 100000)
-            text += f"• {from_user} owes {to_user}: {amount}\n"
-
-    keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
-    return text, keyboard
-
-def render_my_balance_message(balance_summary: dict, user_name: str, user_id: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"👤 <b>Your Balance Summary ({user_name})</b>\n\n"
-
-    total_owed = balance_summary.get('total_owed', 0) / 100000
-    total_owed_to_user = balance_summary.get('total_owed_to_user', 0) / 100000
-
-    if total_owed_to_user > total_owed and total_owed_to_user - total_owed >= 0.01:
-        net_balance = total_owed_to_user - total_owed
-        text += f"🎉 You are owed a net total of: {format_amount(net_balance)}\n\n"
-    elif total_owed > total_owed_to_user and total_owed - total_owed_to_user >= 0.01:
-        net_balance = total_owed - total_owed_to_user
-        text += f"💸 You owe a net total of: {format_amount(net_balance)}\n\n"
-    else:
-        text += "Everyone is settled up! 🎉\n\n"
-
-    if balance_summary['detailed_debts']:
-        text += "<b>Details:</b>\n"
-        for debt in balance_summary['detailed_debts']:
-            from_user = debt['from_user_display_name']
-            to_user = debt['to_user_display_name']
-            amount = format_amount(debt['amount_u5'] / 100000)
-
-            if debt['from_user_id'] == user_id:
-                text += f"• You owe {to_user}: {amount}\n"
-            else:
-                text += f"• {from_user} owes you: {amount}\n"
-
-    keyboard = telebot.types.InlineKeyboardMarkup()
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:main_menu"))
-
-    return text, keyboard
 
 def render_history_message(history_events: list[dict], group_name: str, limit: int, offset: int) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     text = f"📜 <b>Recent History for {group_name}</b>\n\n"
@@ -501,7 +470,7 @@ def render_history_message(history_events: list[dict], group_name: str, limit: i
     if pagination_row:
         keyboard.row(*pagination_row)
         
-    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back to Main Menu", callback_data="dm:main_menu"))
+    keyboard.add(telebot.types.InlineKeyboardButton("◀ Back", callback_data="dm:reports"))
 
     return text, keyboard
 
@@ -523,11 +492,8 @@ def render_help_message() -> tuple[str, telebot.types.InlineKeyboardMarkup]:
     <b>📜 History</b>
     View a list of the most recent transactions in the group.
 
-    <b>📊 My Balance</b>
-    See a summary of who you owe and who owes you.
-
-    <b>📋 All Balances</b>
-    Get an overview of all outstanding debts in the group.
+    <b>📊 Balances</b>
+    See a summary of who you owe and who owes you, as well as other outstanding debts in the group.
 
     <b>⚖️ Fair Splitting & Rounding</b>
     To ensure fairness and Shariah compliance, the bot handles rounding with full transparency.
