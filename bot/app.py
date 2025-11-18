@@ -1702,7 +1702,7 @@ class Bot:
             owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
             if owner_id:
                 logger.info(f"User {user_id} is resetting a wizard owned by {owner_id} back to the main menu. Deleting draft.")
-                active_draft = get_active_draft(chat_id, owner_id, DB_TIMEZONE_OFFSET)
+                active_draft = get_active_draft(chat_id, owner_id)
                 if active_draft:
                     draft_data = json.loads(active_draft['data_json'])
                     self._delete_draft_and_files(active_draft['id'], draft_data)
@@ -1790,7 +1790,14 @@ class Bot:
                 expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
                 editor_name = get_user_display_name(user_id)
-                wizard_text, wizard_keyboard = render_settle_debt_wizard(draft_data=draft_data, current_step=current_step, total_steps=4, chat_id=chat_id, user_id=user_id, editor_name=editor_name)
+                wizard_text, wizard_keyboard = render_wizard(
+                    wizard_type='settlement',
+                    draft_data=draft_data,
+                    current_step=current_step,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    editor_name=editor_name
+                )
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
                 self.bot.answer_callback_query(call.id)
 
