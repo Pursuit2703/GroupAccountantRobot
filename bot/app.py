@@ -23,6 +23,7 @@ from bot.db.repos import (
     get_expense,
     get_expense_debtors,
     update_debtor_status,
+    reject_expense,
     upsert_debt,
     get_user_display_name,
     get_user,
@@ -1408,6 +1409,7 @@ class Bot:
             try:
                 logger.info(f"User {debtor_id_to_reject} is rejecting expense {expense_id}. Updating status to 'rejected'.")
                 update_debtor_status(expense_id, debtor_id_to_reject, 'rejected')
+                reject_expense(expense_id)
                 
                 # Notify the payer with an @-mention in the group chat
                 payer_id_internal = expense['payer_id']

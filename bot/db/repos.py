@@ -295,6 +295,14 @@ def update_debtor_status(expense_id: int, debtor_id: int, status: str) -> None:
             "UPDATE expense_debtors SET status = ?, status_at = datetime('now') WHERE expense_id = ? AND debtor_id = ?",
             (status, expense_id, debtor_id),
         )
+
+def reject_expense(expense_id: int) -> None:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE expenses SET rejected = 1, rejected_at = datetime('now') WHERE id = ?",
+            (expense_id,),
+        )
         
 def delete_expense(expense_id: int) -> None:
     with get_connection() as conn:
@@ -429,8 +437,8 @@ def get_group_history(chat_id: int, limit: int = 10, offset: int = 0) -> list[di
                 NULL as to_user_name
             FROM expenses e
             JOIN users p ON e.payer_id = p.id
-            WHERE e.chat_id = ? AND e.id NOT IN (
-                SELECT expense_id FROM expense_debtors WHERE status = 'rejected'
+            WHERE e.chat_id = ? AND e.rejected = 0 AND e.id NOT IN (
+                SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending'
             )
             UNION ALL
             SELECT
@@ -469,8 +477,8 @@ def get_full_group_history(chat_id: int) -> list[dict]:
                 NULL as to_user_name
             FROM expenses e
             JOIN users p ON e.payer_id = p.id
-            WHERE e.chat_id = ? AND e.id NOT IN (
-                SELECT expense_id FROM expense_debtors WHERE status = 'rejected'
+            WHERE e.chat_id = ? AND e.rejected = 0 AND e.id NOT IN (
+                SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending'
             )
             UNION ALL
             SELECT
@@ -592,7 +600,9 @@ def get_spending_by_category(chat_id: int) -> list[dict]:
         cursor.execute("""
             SELECT category, SUM(amount_u5) as total_amount
             FROM expenses
-            WHERE chat_id = ?
+            WHERE chat_id = ? AND rejected = 0 AND id NOT IN (
+                SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending'
+            )
             GROUP BY category
             ORDER BY total_amount DESC
         """, (chat_id,))
@@ -657,7 +667,9 @@ def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
             SELECT u.display_name, SUM(e.amount_u5) as total_amount
             FROM expenses e
             JOIN users u ON e.payer_id = u.id
-            WHERE e.chat_id = ? AND e.created_at >= date('now', '-{days} days')
+            WHERE e.chat_id = ? AND e.created_at >= date('now', '-{days} days') AND e.rejected = 0 AND e.id NOT IN (
+                SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending'
+            )
             GROUP BY u.display_name
             ORDER BY total_amount DESC
         """, (chat_id,))
