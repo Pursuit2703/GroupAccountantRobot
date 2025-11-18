@@ -42,7 +42,7 @@ from bot.db.repos import (
     get_users_owed_by_user,
     get_owed_amount,
     get_spending_by_category,
-    get_who_paid_how_much_by_period,
+    get_spending_by_user_by_period,
     set_settings_editor_id,
     create_or_update_group_menu,
     get_group_history,
@@ -885,7 +885,7 @@ class Bot:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
             
-            payment_data = get_who_paid_how_much_by_period(chat_id, 7)
+            payment_data = get_spending_by_user_by_period(chat_id, 7)
             text, keyboard = render_who_paid_how_much(group_name, payment_data, "Last 7 Days")
             
             self.bot.edit_message_text(
@@ -905,7 +905,7 @@ class Bot:
             group_info = self.bot.get_chat(chat_id)
             group_name = group_info.title if group_info.title else "Your Group Name"
             
-            payment_data = get_who_paid_how_much_by_period(chat_id, 30)
+            payment_data = get_spending_by_user_by_period(chat_id, 30)
             text, keyboard = render_who_paid_how_much(group_name, payment_data, "Last 30 Days")
             
             self.bot.edit_message_text(

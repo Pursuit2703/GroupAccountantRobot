@@ -660,17 +660,57 @@ def get_old_pending_settlements(seconds: int) -> list[dict]:
             AND created_at < datetime('now', '-' || ? || ' seconds')
         """, (seconds,))
         return [dict(row) for row in cursor.fetchall()]
-def get_who_paid_how_much_by_period(chat_id: int, days: int) -> list[dict]:
+def get_spending_by_user_by_period(chat_id: int, days: int) -> list[dict]:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"""
-            SELECT u.display_name, SUM(e.amount_u5) as total_amount
-            FROM expenses e
-            JOIN users u ON e.payer_id = u.id
-            WHERE e.chat_id = ? AND e.created_at >= date('now', '-{days} days') AND e.rejected = 0 AND e.id NOT IN (
-                SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending'
+        
+        # We need to use two separate queries for chat_id because of the UNION ALL
+        params = (chat_id, days, chat_id, days)
+        
+        query = f"""
+            WITH DebtorShares AS (
+                SELECT 
+                    expense_id, 
+                    SUM(share_u5) as total_debtor_shares
+                FROM expense_debtors
+                GROUP BY expense_id
+            ),
+            PayerExpenses AS (
+                SELECT 
+                    e.payer_id as user_id,
+                    e.amount_u5 - COALESCE(ds.total_debtor_shares, 0) as share_u5
+                FROM expenses e
+                LEFT JOIN DebtorShares ds ON e.id = ds.expense_id
+                WHERE e.chat_id = ?
+                  AND e.created_at >= date('now', '-' || ? || ' days')
+                  AND e.rejected = 0
+                  AND e.id NOT IN (SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending')
+            ),
+            DebtorExpenses AS (
+                SELECT
+                    ed.debtor_id AS user_id,
+                    ed.share_u5
+                FROM expense_debtors ed
+                JOIN expenses e ON ed.expense_id = e.id
+                WHERE e.chat_id = ? 
+                  AND e.created_at >= date('now', '-' || ? || ' days')
+                  AND e.rejected = 0 
+                  AND e.id NOT IN (SELECT DISTINCT expense_id FROM expense_debtors WHERE status = 'pending')
+            ),
+            ExpenseParticipants AS (
+                SELECT * FROM PayerExpenses
+                UNION ALL
+                SELECT * FROM DebtorExpenses
             )
-            GROUP BY u.display_name
-            ORDER BY total_amount DESC
-        """, (chat_id,))
+            SELECT
+                p.user_id,
+                u.display_name,
+                SUM(p.share_u5) AS total_amount
+            FROM ExpenseParticipants p
+            JOIN users u ON p.user_id = u.id
+            GROUP BY p.user_id, u.display_name
+            ORDER BY total_amount DESC;
+        """
+        
+        cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]

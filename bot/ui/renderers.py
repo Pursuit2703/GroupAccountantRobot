@@ -156,7 +156,7 @@ def render_spending_by_category(group_name: str, spending_data: list[dict]) -> t
     return text, keyboard
 
 def render_who_paid_how_much(group_name: str, payment_data: list[dict], period: str) -> tuple[str, telebot.types.InlineKeyboardMarkup]:
-    text = f"🗓️ <b>Who Paid How Much ({period}) for {group_name}</b>\n\n"
+    text = f"📊 <b>Total Spending ({period}) for {group_name}</b>\n\n"
 
     if not payment_data:
         text += "No payment data available for this period."
