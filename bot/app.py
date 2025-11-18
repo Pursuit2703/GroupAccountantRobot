@@ -1780,12 +1780,8 @@ class Bot:
             if active_draft and active_draft['type'] == 'settlement' and active_draft['step'] == 1:
                 draft_id, draft_data, current_step = active_draft['id'], json.loads(active_draft['data_json']), active_draft['step']
                 
-                owed_users = get_users_owed_by_user(user_id, chat_id)
-                if len(owed_users) == 1 and draft_data.get('payee') == payee_id:
-                    self.bot.answer_callback_query(call.id, text="❗ You cannot unselect the only person you owe money to.", show_alert=True)
-                    return
-
                 draft_data['payee'] = payee_id
+                current_step += 1 # Auto-advance to next step
 
                 expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                 update_draft(draft_id, draft_data, current_step, expires_at)
@@ -1799,6 +1795,8 @@ class Bot:
                     editor_name=editor_name
                 )
                 self.bot.edit_message_text(chat_id=chat_id, message_id=draft_data['wizard_message_id'], text=wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+                self.bot.answer_callback_query(call.id)
+            else:
                 self.bot.answer_callback_query(call.id)
 
     def handle_settle_edit_step(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, step: int):
