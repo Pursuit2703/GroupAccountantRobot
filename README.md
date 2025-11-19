@@ -13,6 +13,35 @@ A sophisticated Telegram bot for managing shared expenses and debts within a gro
 - **User-Specific Settings:** Users can manage their own settings, such as enabling auto-confirmation for expenses or settlements.
 - **Robust Error Handling:** The bot is designed to be resilient, handling common issues like message deletion or concurrent user actions gracefully.
 
+## Architecture
+
+The project is structured in a modular way to separate concerns and make the codebase easy to maintain and extend.
+
+*   `main.py`: The main entry point of the application. It initializes and runs the bot.
+*   `bot/`: This directory contains all the core bot logic.
+    *   `app.py`: The heart of the bot, containing the `Bot` class that manages all Telegram message handlers, callback query handlers, and the main application loop. It also runs a background thread for cleanup tasks.
+    *   `config.py`: Manages the application's configuration by reading and parsing environment variables.
+    *   `logger.py`: Configures the logging for the application.
+    *   `categories.py`: Defines expense categories and related helper functions.
+    *   `db/`: This package handles all database interactions.
+        *   `connection.py`: Provides a context manager for creating and managing SQLite database connections.
+        *   `migrations.py`: Defines the database schema and handles migrations.
+        *   `repos.py`: The data access layer. It contains functions to query the database, abstracting SQL from the rest of the application.
+    *   `services/`: This package contains the business logic of the application.
+        *   `accounting.py`: Provides functions for calculating user balances and group debts.
+        *   `draft_service.py`: Manages the lifecycle of draft messages for the interactive wizards.
+        *   `file_service.py`: Handles the uploading and downloading of files (like receipts) to and from the designated Telegram channel.
+        *   `menu_service.py`: Responsible for generating and handling the main menu.
+        *   `reporter.py`: Generates user-facing reports, like CSV exports of expenses.
+        *   `wizard_service.py`: Manages the state and flow of the interactive wizards for adding expenses and settlements.
+    *   `ui/`: This package is responsible for the user interface.
+        *   `renderers.py`: Contains functions that generate the text and interactive keyboards for all bot messages.
+        *   `wizard_config.py`: Defines the structure and configuration for each step of the wizards.
+        *   `wizard_helpers.py`: Provides helper functions and utilities for the wizard system.
+    *   `utils/`: This package contains miscellaneous utility functions.
+        *   `currency.py`: Provides helper functions for formatting currency values.
+        *   `time.py`: Contains timezone-aware time and date utility functions.
+
 ## Getting Started
 
 Follow these instructions to get your own instance of the Group Accountant Robot up and running.
