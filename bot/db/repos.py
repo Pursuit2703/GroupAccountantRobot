@@ -678,7 +678,10 @@ def get_spending_by_user_by_period(chat_id: int, days: int) -> list[dict]:
             PayerExpenses AS (
                 SELECT 
                     e.payer_id as user_id,
-                    e.amount_u5 - COALESCE(ds.total_debtor_shares, 0) as share_u5
+                    CASE
+                        WHEN e.category = 'Debt' THEN 0
+                        ELSE e.amount_u5 - COALESCE(ds.total_debtor_shares, 0)
+                    END as share_u5
                 FROM expenses e
                 LEFT JOIN DebtorShares ds ON e.id = ds.expense_id
                 WHERE e.chat_id = ?
