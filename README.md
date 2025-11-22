@@ -97,8 +97,11 @@ The bot will start polling for updates from Telegram.
 
 1.  Add the bot to your Telegram group.
 2.  Send the `/start` or `/menu` command in the group.
-3.  The bot will display the main menu, from which you can access all its features.
+3.  The bot will display the main menu, from which you can access all its features. 
 4.  Follow the on-screen wizards to add expenses, settle debts, and manage your group's finances.
+
+### Note
+ - For the bot to recognize any user, they must first interact with it, either by sending a message or clicking any button.
 
 ## Contributing
 
