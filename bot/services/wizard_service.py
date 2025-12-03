@@ -11,8 +11,8 @@ from bot.db.connection import get_connection
 def handle_amount_input(bot, message, active_draft):
     try:
         amount = float(message.text)
-        if not (0 < amount < 1_000_000_000):
-            warning_msg = bot.send_message(message.chat.id, "❗ Amount must be between 0 and 1,000,000,000.")
+        if not (1 <= amount < 1_000_000_000):
+            warning_msg = bot.send_message(message.chat.id, "❗ Amount must be between 1 and 1,000,000,000.")
             threading.Timer(5.0, bot.delete_message, [message.chat.id, warning_msg.message_id]).start()
             return
 
