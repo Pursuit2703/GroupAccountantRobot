@@ -1,5 +1,6 @@
 
 import telebot
+from decimal import Decimal
 from bot.config import CURRENCY, FILES_CHANNEL_ID
 from bot.db.repos import get_group_members, get_users_owed_by_user, get_owed_amount, get_user, get_debt_between_users, get_user_display_name, get_owed_amount
 from bot.utils.currency import format_amount
@@ -401,10 +402,9 @@ def render_expense_message(expense: dict, payer_name: str, debtors: list[dict], 
 
     total_formatted_share = (share_u5 / 100000) * participants_count
     
-    expense_float = expense['amount_u5'] / 100000
-    formatted_expense = float(f"{expense_float:.3f}")
-
-    remainder = formatted_expense - total_formatted_share
+    expense_decimal = Decimal(expense['amount_u5']) / Decimal(100000)
+    
+    remainder = expense_decimal - Decimal(total_formatted_share)
 
     if remainder > 0.0001:
         remainder_str = f"{remainder:.3f}".rstrip('0').rstrip('.')
