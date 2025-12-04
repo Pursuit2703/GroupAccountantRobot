@@ -21,6 +21,7 @@ def handle_amount_input(bot, message, active_draft):
         current_step = active_draft['step']
 
         draft_data['amount'] = amount
+        draft_data['amount_u5'] = int(amount * 100000)
         current_step += 1
         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
         update_draft(draft_id, draft_data, current_step, expires_at)
