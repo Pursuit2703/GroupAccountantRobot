@@ -3,6 +3,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 import json
+from decimal import Decimal
 import threading
 import time
 from bot.db.connection import get_connection
@@ -567,7 +568,7 @@ class Bot:
                         handle_amount_input(self.bot, message, active_draft)
                 elif active_draft['type'] == 'clear_debt':
                     try:
-                        amount = float(message.text)
+                        amount = Decimal(message.text)
                         if amount >= 1_000_000_000:
                             self.bot.delete_message(message.chat.id, message.message_id)
                             warning_msg = self.bot.send_message(message.chat.id, "❗ Amount must be less than 1,000,000,000.")
@@ -580,7 +581,8 @@ class Bot:
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                             return
                         
-                        draft_data['amount_to_clear'] = amount
+                        draft_data['amount_to_clear'] = float(amount)
+                        draft_data['amount_to_clear_u5'] = int(amount * 100000)
                         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(active_draft['id'], draft_data, 2, expires_at)
                         self.bot.delete_message(message.chat.id, message.message_id)
@@ -1248,8 +1250,7 @@ class Bot:
                 return
 
             payer_id = active_draft['user_id']
-            amount = draft_data['amount']
-            amount_u5 = int(amount * 100000)
+            amount_u5 = draft_data['amount_u5']
             description = draft_data.get('description')
             category = ', '.join(draft_data.get('categories', []))
             debtors = draft_data['debtors']
@@ -1272,9 +1273,14 @@ class Bot:
                 self.bot.answer_callback_query(call.id, text="❗ Cannot calculate split with no participants.", show_alert=True)
                 return
 
-            share_float = amount / len(participants)
-            truncated_share = int(share_float * 1000) / 1000
-            share_u5 = int(truncated_share * 100000)
+            if categories == ['Debt'] and len(participants) == 1:
+                # This is a direct debt, not a split, so use the full amount.
+                share_u5 = amount_u5
+            else:
+                # For regular splits, use the existing truncation logic for fairness.
+                share_float = Decimal(draft_data['amount']) / len(participants)
+                truncated_share = int(share_float * 1000) / 1000
+                share_u5 = int(truncated_share * 100000)
 
             try:
                 expense_id = create_expense(chat_id, payer_id, amount_u5, description, category)
@@ -1588,6 +1594,7 @@ class Bot:
         
         draft_data = json.loads(active_draft['data_json'])
         draft_data['amount_to_clear'] = draft_data['total_debt_u5'] / 100000
+        draft_data['amount_to_clear_u5'] = draft_data['total_debt_u5']
         
         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
         update_draft(active_draft['id'], draft_data, 2, expires_at)
@@ -1673,7 +1680,7 @@ class Bot:
             debtor_id = draft_data['debtor_id']
             payee_id = user_id
             amount_to_clear = draft_data['amount_to_clear']
-            amount_to_clear_u5 = int(amount_to_clear * 100000)
+            amount_to_clear_u5 = draft_data['amount_to_clear_u5']
 
             # To clear the debt, we credit the payee from the debtor
             upsert_debt(payee_id, debtor_id, amount_to_clear_u5)
@@ -1830,9 +1837,9 @@ class Bot:
                 if 'payee' in draft_data:
                     owed_amount = get_owed_amount(user_id, draft_data['payee'])
                     if owed_amount > 0:
-                        owed_amount_float = owed_amount / 100000
-                        truncated_owed_amount = int(owed_amount_float * 1000) / 1000
-                        draft_data['amount'] = truncated_owed_amount
+                        draft_data['amount'] = owed_amount / 100000
+                        #truncated_owed_amount = int(owed_amount_float * 1000) / 1000
+                        draft_data['amount_u5'] = owed_amount # truncated_owed_amount
                         current_step += 1
                         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(draft_id, draft_data, current_step, expires_at)
@@ -1899,7 +1906,7 @@ class Bot:
 
             from_user_id = active_draft['user_id']
             to_user_id = draft_data['payee']
-            amount_u5 = int(draft_data['amount'] * 100000)
+            amount_u5 = draft_data['amount_u5']
             files = draft_data.get('files', [])
 
             try:

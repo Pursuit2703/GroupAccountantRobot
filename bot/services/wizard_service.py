@@ -8,9 +8,11 @@ from bot.ui.renderers import render_wizard
 import threading
 from bot.db.connection import get_connection
 
+from decimal import Decimal
+
 def handle_amount_input(bot, message, active_draft):
     try:
-        amount = float(message.text)
+        amount = Decimal(message.text)
         if not (1 <= amount < 1_000_000_000):
             warning_msg = bot.send_message(message.chat.id, "❗ Amount must be between 1 and 1,000,000,000.")
             threading.Timer(5.0, bot.delete_message, [message.chat.id, warning_msg.message_id]).start()
@@ -20,7 +22,8 @@ def handle_amount_input(bot, message, active_draft):
         draft_data = json.loads(active_draft['data_json'])
         current_step = active_draft['step']
 
-        draft_data['amount'] = amount
+        draft_data['amount'] = float(amount) # For compatibility with other parts that expect a float
+        draft_data['amount_u5'] = int(amount * 100000)
         current_step += 1
         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
         update_draft(draft_id, draft_data, current_step, expires_at)
