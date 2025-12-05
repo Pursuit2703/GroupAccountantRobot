@@ -1278,9 +1278,11 @@ class Bot:
                 share_u5 = amount_u5
             else:
                 # For regular splits, use the existing truncation logic for fairness.
-                share_float = Decimal(draft_data['amount']) / len(participants)
-                truncated_share = int(share_float * 1000) / 1000
-                share_u5 = int(truncated_share * 100000)
+                # Use the precise amount_u5 for splitting to avoid float precision issues.
+                total_amount_decimal = Decimal(amount_u5) / Decimal(100000)
+                share_decimal = total_amount_decimal / len(participants)
+                truncated_share_decimal = Decimal(int(share_decimal * 1000)) / 1000
+                share_u5 = int(truncated_share_decimal * 100000)
 
             try:
                 expense_id = create_expense(chat_id, payer_id, amount_u5, description, category)
@@ -1837,9 +1839,9 @@ class Bot:
                 if 'payee' in draft_data:
                     owed_amount = get_owed_amount(user_id, draft_data['payee'])
                     if owed_amount > 0:
-                        draft_data['amount'] = owed_amount / 100000
-                        #truncated_owed_amount = int(owed_amount_float * 1000) / 1000
-                        draft_data['amount_u5'] = owed_amount # truncated_owed_amount
+                        owed_amount_decimal = Decimal(owed_amount) / Decimal(100000)
+                        draft_data['amount'] = float(owed_amount_decimal)
+                        draft_data['amount_u5'] = owed_amount
                         current_step += 1
                         expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
                         update_draft(draft_id, draft_data, current_step, expires_at)
