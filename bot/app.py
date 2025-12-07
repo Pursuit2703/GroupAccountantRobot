@@ -575,9 +575,9 @@ class Bot:
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                             return
                         total_debt = draft_data['total_debt_u5'] / 100000
-                        if not (1 <= amount <= total_debt):
+                        if not (0.00001 <= amount <= total_debt):
                             self.bot.delete_message(message.chat.id, message.message_id)
-                            warning_msg = self.bot.send_message(message.chat.id, f"❗ Amount must be between 1 and {total_debt}.")
+                            warning_msg = self.bot.send_message(message.chat.id, f"❗ Amount must be between 0.00001 and {total_debt}.")
                             threading.Timer(5.0, self.delete_message, [message.chat.id, warning_msg.message_id]).start()
                             return
                         
