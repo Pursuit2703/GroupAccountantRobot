@@ -230,28 +230,6 @@ class Bot:
             
             time.sleep(60) # Sleep for 1 minute
 
-    def cleanup_old_menus(self):
-        while True:
-            try:
-                old_menus = get_groups_with_old_menus(DRAFT_TTL_SECONDS)
-                if old_menus:
-                    for group in old_menus:
-                        chat_id = group['chat_id']
-                        message_id = group['menu_message_id']
-                        try:
-                            self.bot.delete_message(chat_id, message_id)
-                            set_menu_message_id(chat_id, None)
-                            logger.info(f"Deleted old menu {message_id} in chat {chat_id}")
-                        except Exception as e:
-                            logger.error(f"Error deleting old menu {message_id} in chat {chat_id}: {e}")
-                            if "message to delete not found" in str(e).lower():
-                                set_menu_message_id(chat_id, None)
-
-            except Exception as e:
-                logger.error(f"Error in cleanup_old_menus: {e}")
-            
-            time.sleep(60)
-
     def cleanup_menu_creation_time(self):
         while True:
             try:
@@ -1449,50 +1427,7 @@ class Bot:
                 logger.error(f"Error rejecting debt: {e}")
                 self.bot.answer_callback_query(call.id, text="❗ An error occurred while rejecting the debt.", show_alert=True)
 
-    def handle_delete_expense(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
-        if payload:
-            try:
-                expense_id = int(payload)
-            except ValueError:
-                self.bot.answer_callback_query(call.id, text="❗ Invalid callback data.", show_alert=True)
-                return
 
-            with get_connection() as conn:
-                expense = get_expense(expense_id)
-                if not expense:
-                    self.bot.answer_callback_query(call.id, text="❗ This expense does not exist.", show_alert=True)
-                    return
-
-                if expense['payer_id'] != user_id:
-                    self.bot.answer_callback_query(call.id, text="❗ You are not authorized to delete this expense.", show_alert=True)
-                    return
-
-                files = get_expense_files(expense_id)
-                for file_info in files:
-                    try:
-                        self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
-                    except Exception as e:
-                        logger.error(f"Error deleting file from channel: {e}")
-                    delete_file_by_id(file_info['file_row_id'])
-
-                delete_expense(expense_id)
-                self.bot.delete_message(chat_id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, text="✅ Expense deleted!")
-        else:
-            active_draft = get_active_draft(chat_id, user_id)
-            if active_draft:
-                draft_data = json.loads(active_draft['data_json'])
-                if 'files' in draft_data:
-                    for file_info in draft_data['files']:
-                        try:
-                            self.bot.delete_message(FILES_CHANNEL_ID, file_info['origin_channel_message_id'])
-                        except Exception as e:
-                            logger.error(f"Error deleting file from channel: {e}")
-                        delete_file_by_id(file_info['file_row_id'])
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM drafts WHERE id = ?", (active_draft['id'],))
-                self.bot.delete_message(chat_id, draft_data['wizard_message_id'])
-                self.bot.answer_callback_query(call.id, text="Draft cancelled.")
 
     def handle_edit_expense(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int, payload: str):
         try:
