@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
-debt_manager.db
+*.db
 *.log
 *.db-shm
 *.db-wal
