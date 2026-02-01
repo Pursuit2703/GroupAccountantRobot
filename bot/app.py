@@ -1450,6 +1450,7 @@ class Bot:
         # Create a new draft from the expense
         draft_data = {
             'amount': expense['amount_u5'] / 100000,
+            'amount_u5': expense['amount_u5'],
             'description': expense['description'],
             'categories': expense['category'].split(', ') if expense['category'] else [],
             'debtors': [d['debtor_id'] for d in get_expense_debtors(expense_id)],
@@ -2036,6 +2037,7 @@ class Bot:
         draft_data = {
             'payee': settlement['to_user_id'],
             'amount': settlement['amount_u5'] / 100000,
+            'amount_u5': settlement['amount_u5'],
             'files': get_settlement_files(settlement_id),
             'no_proof': not get_settlement_files(settlement_id)
         }
