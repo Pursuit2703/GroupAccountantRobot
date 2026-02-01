@@ -1436,47 +1436,51 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ Invalid callback data.", show_alert=True)
             return
 
-        with get_connection() as conn:
-            expense = get_expense(expense_id)
-            if not expense:
-                self.bot.answer_callback_query(call.id, text="❗ This expense does not exist.", show_alert=True)
-                return
+        expense = get_expense(expense_id)
+        if not expense:
+            self.bot.answer_callback_query(call.id, text="❗ This expense does not exist.", show_alert=True)
+            return
 
-            if expense['payer_id'] != user_id:
-                self.bot.answer_callback_query(call.id, text="❗ You are not authorized to edit this expense.", show_alert=True)
-                return
+        if expense['payer_id'] != user_id:
+            self.bot.answer_callback_query(call.id, text="❗ You are not authorized to edit this expense.", show_alert=True)
+            return
 
-            # Create a new draft from the expense
-            draft_data = {
-                'amount': expense['amount_u5'] / 100000,
-                'description': expense['description'],
-                'categories': expense['category'].split(', '),
-                'debtors': [d['debtor_id'] for d in get_expense_debtors(expense_id)],
-                'files': get_expense_files(expense_id)
-            }
-            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
-            draft_id = create_draft(chat_id, user_id, "expense", expires_at)
-            update_draft(draft_id, draft_data, 5, expires_at) # Go to step 5
+        self.bot.answer_callback_query(call.id)
 
-            # Delete the old expense
-            delete_expense(expense_id)
+        # Create a new draft from the expense
+        draft_data = {
+            'amount': expense['amount_u5'] / 100000,
+            'description': expense['description'],
+            'categories': expense['category'].split(', ') if expense['category'] else [],
+            'debtors': [d['debtor_id'] for d in get_expense_debtors(expense_id)],
+            'files': get_expense_files(expense_id)
+        }
+        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
+        draft_id = create_draft(chat_id, user_id, "expense", expires_at)
+        update_draft(draft_id, draft_data, 5, expires_at) # Go to step 5
 
-            # Delete the old expense message
+        # Delete the old expense
+        delete_expense(expense_id)
+
+        # Delete the old expense message
+        try:
             self.bot.delete_message(chat_id, call.message.message_id)
+        except Exception as e:
+            logger.warning(f"Could not delete old expense message {call.message.message_id}: {e}")
 
-            # Start the wizard
-            editor_name = get_user_display_name(user_id)
-            wizard_text, wizard_keyboard = render_wizard(
-                wizard_type='expense',
-                draft_data=draft_data,
-                current_step=5,
-                chat_id=chat_id,
-                user_id=user_id,
-                editor_name=editor_name
-            )
-            new_message = self.bot.send_message(chat_id, wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
-            draft_data['wizard_message_id'] = new_message.message_id
-            update_draft(draft_id, draft_data, 5, expires_at)
+        # Start the wizard
+        editor_name = get_user_display_name(user_id)
+        wizard_text, wizard_keyboard = render_wizard(
+            wizard_type='expense',
+            draft_data=draft_data,
+            current_step=5,
+            chat_id=chat_id,
+            user_id=user_id,
+            editor_name=editor_name
+        )
+        new_message = self.bot.send_message(chat_id, wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+        draft_data['wizard_message_id'] = new_message.message_id
+        update_draft(draft_id, draft_data, 5, expires_at)
 
     def handle_balances(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         message_id = call.message.message_id
@@ -2019,44 +2023,43 @@ class Bot:
             self.bot.answer_callback_query(call.id, text="❗ Invalid callback data.", show_alert=True)
             return
 
-        with get_connection() as conn:
-            settlement = get_settlement(settlement_id)
-            if not settlement:
-                self.bot.answer_callback_query(call.id, text="❗ This settlement does not exist.", show_alert=True)
-                return
+        settlement = get_settlement(settlement_id)
+        if not settlement:
+            self.bot.answer_callback_query(call.id, text="❗ This settlement does not exist.", show_alert=True)
+            return
 
-            if settlement['from_user_id'] != user_id:
-                self.bot.answer_callback_query(call.id, text="❗ You are not authorized to edit this settlement.", show_alert=True)
-                return
+        if settlement['from_user_id'] != user_id:
+            self.bot.answer_callback_query(call.id, text="❗ You are not authorized to edit this settlement.", show_alert=True)
+            return
 
-            # Create a new draft from the settlement
-            draft_data = {
-                'payee': settlement['to_user_id'],
-                'amount': settlement['amount_u5'] / 100000,
-                'files': get_settlement_files(settlement_id),
-                'no_proof': not get_settlement_files(settlement_id)
-            }
-            expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
-            draft_id = create_draft(chat_id, user_id, "settlement", expires_at)
-            update_draft(draft_id, draft_data, 4, expires_at) # Go to step 4
+        # Create a new draft from the settlement
+        draft_data = {
+            'payee': settlement['to_user_id'],
+            'amount': settlement['amount_u5'] / 100000,
+            'files': get_settlement_files(settlement_id),
+            'no_proof': not get_settlement_files(settlement_id)
+        }
+        expires_at = (get_now_in_configured_timezone() + timedelta(seconds=DRAFT_TTL_SECONDS)).isoformat(' ')
+        draft_id = create_draft(chat_id, user_id, "settlement", expires_at)
+        update_draft(draft_id, draft_data, 4, expires_at) # Go to step 4
 
-            # Delete the old settlement
-            delete_settlement(settlement_id)
+        # Delete the old settlement
+        delete_settlement(settlement_id)
 
-            # Delete the old settlement message
-            self.bot.delete_message(chat_id, call.message.message_id)
+        # Delete the old settlement message
+        self.bot.delete_message(chat_id, call.message.message_id)
 
-            # Start the wizard
-            wizard_text, wizard_keyboard = render_wizard(
-                wizard_type='settlement',
-                draft_data=draft_data,
-                current_step=4,
-                chat_id=chat_id,
-                user_id=user_id
-            )
-            new_message = self.bot.send_message(chat_id, wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
-            draft_data['wizard_message_id'] = new_message.message_id
-            update_draft(draft_id, draft_data, 4, expires_at)
+        # Start the wizard
+        wizard_text, wizard_keyboard = render_wizard(
+            wizard_type='settlement',
+            draft_data=draft_data,
+            current_step=4,
+            chat_id=chat_id,
+            user_id=user_id
+        )
+        new_message = self.bot.send_message(chat_id, wizard_text, reply_markup=wizard_keyboard, parse_mode='HTML')
+        draft_data['wizard_message_id'] = new_message.message_id
+        update_draft(draft_id, draft_data, 4, expires_at)
 
     def handle_help(self, call: telebot.types.CallbackQuery, chat_id: int, user_id: int):
         try:
