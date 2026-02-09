@@ -144,13 +144,11 @@ class Bot:
                     try:
                         draft_data = json.loads(draft['data_json'])
                         if 'wizard_message_id' in draft_data:
-                            try:
-                                self.bot.delete_message(draft['chat_id'], draft_data['wizard_message_id'])
-                            except Exception as e:
-                                if "message to delete not found" in str(e).lower():
-                                    logger.warning(f"Wizard message for stale draft {draft['id']} was already deleted.")
-                                else:
-                                    raise
+                            self._delete_message_for_cleanup(
+                                draft['chat_id'],
+                                draft_data['wizard_message_id'],
+                                f"stale draft {draft['id']}"
+                            )
                         
                         self._delete_draft_and_files(draft['id'], draft_data)
                         logger.info(f"Deleted stale draft {draft['id']} in chat {draft['chat_id']}")
@@ -162,13 +160,11 @@ class Bot:
                 for expense in rejected_expenses:
                     try:
                         if expense['message_id']:
-                            try:
-                                self.bot.delete_message(expense['chat_id'], expense['message_id'])
-                            except Exception as e:
-                                if "message to delete not found" in str(e).lower():
-                                    logger.warning(f"Message for rejected expense {expense['id']} was already deleted.")
-                                else:
-                                    raise
+                            self._delete_message_for_cleanup(
+                                expense['chat_id'],
+                                expense['message_id'],
+                                f"rejected expense {expense['id']}"
+                            )
                         delete_expense(expense['id'])
                         logger.info(f"Deleted rejected expense {expense['id']} in chat {expense['chat_id']}")
                     except Exception as e:
@@ -179,13 +175,11 @@ class Bot:
                 for settlement in rejected_settlements:
                     try:
                         if settlement['message_id']:
-                            try:
-                                self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
-                            except Exception as e:
-                                if "message to delete not found" in str(e).lower():
-                                    logger.warning(f"Message for rejected settlement {settlement['id']} was already deleted.")
-                                else:
-                                    raise
+                            self._delete_message_for_cleanup(
+                                settlement['chat_id'],
+                                settlement['message_id'],
+                                f"rejected settlement {settlement['id']}"
+                            )
                         delete_settlement(settlement['id'])
                         logger.info(f"Deleted rejected settlement {settlement['id']} in chat {settlement['chat_id']}")
                     except Exception as e:
@@ -196,13 +190,11 @@ class Bot:
                 for expense in pending_expenses:
                     try:
                         if expense['message_id']:
-                            try:
-                                self.bot.delete_message(expense['chat_id'], expense['message_id'])
-                            except Exception as e:
-                                if "message to delete not found" in str(e).lower():
-                                    logger.warning(f"Message for pending expense {expense['id']} was already deleted.")
-                                else:
-                                    raise
+                            self._delete_message_for_cleanup(
+                                expense['chat_id'],
+                                expense['message_id'],
+                                f"pending expense {expense['id']}"
+                            )
                         delete_expense(expense['id'])
                         logger.info(f"Deleted pending expense {expense['id']} in chat {expense['chat_id']}")
                     except Exception as e:
@@ -213,13 +205,11 @@ class Bot:
                 for settlement in pending_settlements:
                     try:
                         if settlement['message_id']:
-                            try:
-                                self.bot.delete_message(settlement['chat_id'], settlement['message_id'])
-                            except Exception as e:
-                                if "message to delete not found" in str(e).lower():
-                                    logger.warning(f"Message for pending settlement {settlement['id']} was already deleted.")
-                                else:
-                                    raise
+                            self._delete_message_for_cleanup(
+                                settlement['chat_id'],
+                                settlement['message_id'],
+                                f"pending settlement {settlement['id']}"
+                            )
                         delete_settlement(settlement['id'])
                         logger.info(f"Deleted pending settlement {settlement['id']} in chat {settlement['chat_id']}")
                     except Exception as e:
@@ -229,6 +219,29 @@ class Bot:
                 logger.error(f"Error in cleanup_old_records: {e}")
             
             time.sleep(60) # Sleep for 1 minute
+
+    def _is_ignorable_delete_error(self, error_code: int | None, description: str) -> bool:
+        text = (description or "").lower()
+        ignorable_fragments = (
+            "message to delete not found",
+            "message can't be deleted",
+            "message can not be deleted",
+            "chat not found",
+            "message identifier is not specified",
+        )
+        if any(fragment in text for fragment in ignorable_fragments):
+            return True
+        return error_code in (400, 403)
+
+    def _delete_message_for_cleanup(self, chat_id: int, message_id: int, context: str) -> None:
+        try:
+            self.bot.delete_message(chat_id, message_id)
+        except telebot.apihelper.ApiTelegramException as e:
+            error_code = getattr(e, "error_code", None)
+            description = getattr(e, "description", str(e))
+            if self._is_ignorable_delete_error(error_code, description):
+                return
+            raise
 
     def cleanup_menu_creation_time(self):
         while True:
@@ -1683,7 +1696,7 @@ class Bot:
             owner_id = get_draft_owner_by_message_id(chat_id, call.message.message_id)
             if owner_id:
                 logger.info(f"User {user_id} is closing a wizard owned by {owner_id}. Deleting draft.")
-                active_draft = get_active_draft(chat_id, owner_id, DB_TIMEZONE_OFFSET)
+                active_draft = get_active_draft(chat_id, owner_id)
                 if active_draft:
                     draft_data = json.loads(active_draft['data_json'])
                     self._delete_draft_and_files(active_draft['id'], draft_data)
